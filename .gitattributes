@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Patches must keep the game source's CRLF line endings byte-for-byte,
+# or `git apply` will not match the LCE files.
+*.patch -text

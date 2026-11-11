@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Injected into both LCE projects on CI with
+    /p:ForceImportBeforeCppTargets=<this file>
+  so the game's project files stay untouched.
+-->
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!-- Every toolset: use all runner cores. -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+  <!--
+    v143 fallback only: make VS2022 accept 2012-era code as far as flags can.
+    Errors here that VS2012 wouldn't report are expected; v110 is the
+    reference build.
+  -->
+  <ItemDefinitionGroup Condition="'$(PlatformToolset)' != 'v110'">
+    <ClCompile>
+      <LanguageStandard>stdcpp14</LanguageStandard>
+      <ConformanceMode>false</ConformanceMode>
+      <AdditionalOptions>/permissive /Zc:twoPhase- /Zc:strictStrings- /Zc:forScope- %(AdditionalOptions)</AdditionalOptions>
+      <PreprocessorDefinitions>_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS;_HAS_AUTO_PTR_ETC=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <TreatWarningAsError>false</TreatWarningAsError>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+</Project>

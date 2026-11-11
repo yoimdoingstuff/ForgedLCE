@@ -1,0 +1,23 @@
+diff --git a/Minecraft.Client/Xbox/Xbox_App.cpp b/Minecraft.Client/Xbox/Xbox_App.cpp
+index df256ce..3641961 100644
+--- a/Minecraft.Client/Xbox/Xbox_App.cpp
++++ b/Minecraft.Client/Xbox/Xbox_App.cpp
+@@ -3022,8 +3022,18 @@ void CConsoleMinecraftApp::GetFileFromTPD(eTPDFileType eType,PBYTE pbData,DWORD
+ }
+ 
+ 
++#include "..\..\Minecraft.World\FLCE_Hooks.h" // ForgedLCE
++
+ LPCWSTR	CConsoleMinecraftApp::GetString(int iID)
+ { 
++	// ForgedLCE: names of mod blocks and items. The Xbox 360 looks strings up
++	// in its XUI string table instead of the shared StringTable (patch 0007).
++	if (iID >= ForgedLCE::STRING_ID_BASE)
++	{
++		LPCWSTR modString = ForgedLCE::GetModString(iID);
++		return modString != NULL ? modString : L"";
++	}
++
+ 	return StringTable.Lookup(iID);
+ }
+ 

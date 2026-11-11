@@ -1,0 +1,44 @@
+diff --git a/Minecraft.Client/Minecraft.cpp b/Minecraft.Client/Minecraft.cpp
+index fcdc39a..9ffbcdb 100644
+--- a/Minecraft.Client/Minecraft.cpp
++++ b/Minecraft.Client/Minecraft.cpp
+@@ -1,5 +1,6 @@
+ #include "stdafx.h"
+ #include "Minecraft.h"
++#include "..\Minecraft.World\FLCE_Hooks.h" // ForgedLCE
+ #include "GameMode.h"
+ #include "Timer.h"
+ #include "ProgressRenderer.h"
+@@ -2151,6 +2152,10 @@ void Minecraft::levelTickThreadInitFunc()
+ // 4J - added bUpdateTextures, which is true if the actual renderer textures are to be updated - this will be true for the last time this tick runs with bFirst true
+ void Minecraft::tick(bool bFirst, bool bUpdateTextures)
+ {
++	// ForgedLCE: ClientTick start/end. tick() runs once per local player;
++	// fire only for the first so mods see one event per game tick.
++	ForgedLCE::TickScope flceTick(ForgedLCE::OnClientTick, bFirst);
++
+ 	int iPad=player->GetXboxPad();
+ 	//OutputDebugString("Minecraft::tick\n");
+ 
+diff --git a/Minecraft.Client/MinecraftServer.cpp b/Minecraft.Client/MinecraftServer.cpp
+index 2b49aa4..813d395 100644
+--- a/Minecraft.Client/MinecraftServer.cpp
++++ b/Minecraft.Client/MinecraftServer.cpp
+@@ -5,6 +5,7 @@
+ 
+ #include "Options.h"
+ #include "MinecraftServer.h"
++#include "..\Minecraft.World\FLCE_Hooks.h" // ForgedLCE
+ #include "ConsoleInput.h"
+ #include "PlayerList.h"
+ #include "ServerLevel.h"
+@@ -1427,6 +1428,9 @@ void MinecraftServer::broadcastStopSavingPacket()
+ 
+ void MinecraftServer::tick()
+ {
++	// ForgedLCE: ServerTick start/end (covers every return path)
++	ForgedLCE::TickScope flceTick(ForgedLCE::OnServerTick, true);
++
+     vector<wstring> toRemove;
+     for (AUTO_VAR(it, ironTimers.begin()); it != ironTimers.end(); it++ )
+ 	{

@@ -1,0 +1,83 @@
+# Builds ForgedLCE without the LCE source: the loader and mods compile
+# against the fake game layer (standalone/fakegame) and the tests run.
+# Needs no secrets, so it runs on every push and pull request.
+
+name: Standalone build and tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows64 path (MSVC, DLL + built-in mods)
+            os: windows-latest
+            cmake_args: ""
+            upload_dll: true
+          - name: Console path on Windows (MSVC, built-in mods only)
+            os: windows-latest
+            cmake_args: -DFLCE_EMULATE_CONSOLE=ON
+          - name: Console path, C++03 (gcc, tr1 shared_ptr)
+            os: ubuntu-latest
+            cmake_args: -DCMAKE_CXX_COMPILER=g++ -DCMAKE_CXX_STANDARD=98
+          - name: Console path, C++11 (clang)
+            os: ubuntu-latest
+            cmake_args: -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_CXX_STANDARD=11
+          # The consoles' CPUs, as close as a hosted runner gets. Tests run
+          # under qemu.
+          - name: 32-bit big-endian PowerPC (stand-in for Xbox 360 / PS3), C++03
+            os: ubuntu-24.04
+            cross_packages: g++-powerpc-linux-gnu qemu-user
+            cmake_args: >-
+              -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=ppc
+              -DCMAKE_CXX_COMPILER=powerpc-linux-gnu-g++ -DCMAKE_CXX_STANDARD=98
+              "-DCMAKE_CROSSCOMPILING_EMULATOR=qemu-ppc;-L;/usr/powerpc-linux-gnu"
+          - name: 32-bit ARMv7 (stand-in for PS Vita)
+            os: ubuntu-24.04
+            cross_packages: g++-arm-linux-gnueabihf qemu-user
+            cmake_args: >-
+              -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=arm
+              -DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++ -DCMAKE_CXX_STANDARD=11
+              "-DCMAKE_CROSSCOMPILING_EMULATOR=qemu-arm;-L;/usr/arm-linux-gnueabihf"
+          - name: 32-bit Windows (MSVC Win32)
+            os: windows-latest
+            cmake_args: -A Win32
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross compiler and qemu
+        if: matrix.cross_packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ${{ matrix.cross_packages }}
+
+      - name: Configure
+        shell: bash
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release ${{ matrix.cmake_args }}
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      # Only ForgedLCE's own code: the Windows64 DLL form of ExampleMod.
+      - name: Upload ExampleMod.dll
+        if: matrix.upload_dll
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExampleMod-dll
+          path: build/bin/Release/mods/ExampleMod.dll
+          retention-days: 14

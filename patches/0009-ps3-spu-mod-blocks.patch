@@ -1,0 +1,22 @@
+diff --git a/Minecraft.Client/PS3/SPU_Tasks/ChunkUpdate/Tile_SPU.cpp b/Minecraft.Client/PS3/SPU_Tasks/ChunkUpdate/Tile_SPU.cpp
+index 72a5967..0ba6f40 100644
+--- a/Minecraft.Client/PS3/SPU_Tasks/ChunkUpdate/Tile_SPU.cpp
++++ b/Minecraft.Client/PS3/SPU_Tasks/ChunkUpdate/Tile_SPU.cpp
+@@ -896,4 +896,16 @@ void Tile_SPU::initTilePointers()
+ 	CREATE_TILE_TYPE(stairs_quartz_Id, StairTile_SPU);
+  	CREATE_TILE_TYPE(woolCarpet_Id, WoolCarpetTile_SPU);
+ 
++	// ForgedLCE: block ids with no SPU class above (mod blocks) get the generic
++	// Tile_SPU, which draws a plain block from the per-id data the PPU fills in
++	// for every existing tile (icon, shape, material, light). Without this,
++	// createFromID() draws unknown ids as stone.
++	for (int i = 1; i < 256; i++)
++	{
++		if (m_tiles[i].id == -1)
++		{
++			CREATE_TILE_TYPE(i, Tile_SPU);
++		}
++	}
++
+ };
+\ No newline at end of file

@@ -1,0 +1,23 @@
+diff --git a/Minecraft.World/Level.cpp b/Minecraft.World/Level.cpp
+index ba3cb4e..409e860 100644
+--- a/Minecraft.World/Level.cpp
++++ b/Minecraft.World/Level.cpp
+@@ -1,4 +1,5 @@
+ #include "stdafx.h"
++#include "FLCE_Hooks.h" // ForgedLCE
+ #include "System.h"
+ #include "BasicTypeContainers.h"
+ #include "File.h"
+@@ -1666,6 +1667,12 @@ bool Level::addEntity(shared_ptr<Entity> e)
+ 		return false;
+ 	}
+ 
++	// ForgedLCE: EntityJoinWorld event, cancelable
++	if (ForgedLCE::OnEntityJoinWorld(this, e))
++	{
++		return false;
++	}
++
+ 	bool forced = false;
+ 	if (dynamic_pointer_cast<Player>( e ) != NULL)
+ 	{

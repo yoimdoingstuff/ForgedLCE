@@ -1,0 +1,9 @@
+# Build output for mods built from this repo
+build/
+out/
+*.dll
+*.lib
+*.exp
+*.pdb
+*.obj
+.vs/

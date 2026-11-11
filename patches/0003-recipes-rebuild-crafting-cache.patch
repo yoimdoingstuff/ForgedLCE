@@ -1,0 +1,32 @@
+diff --git a/Minecraft.World/Recipes.cpp b/Minecraft.World/Recipes.cpp
+index 092a74b..9c906a3 100644
+--- a/Minecraft.World/Recipes.cpp
++++ b/Minecraft.World/Recipes.cpp
+@@ -1217,4 +1217,12 @@ void Recipes::buildRecipeIngredientsArray(void)
+ Recipy::INGREDIENTS_REQUIRED *Recipes::getRecipeIngredientsArray(void)
+ {
+ 	return m_pRecipeIngredientsRequired;
++}
++
++// ForgedLCE
++void Recipes::flceRebuildIngredientsArray()
++{
++	delete [] m_pRecipeIngredientsRequired;
++	m_pRecipeIngredientsRequired = NULL;
++	buildRecipeIngredientsArray();
+ }
+\ No newline at end of file
+diff --git a/Minecraft.World/Recipes.h b/Minecraft.World/Recipes.h
+index c940357..7b960e7 100644
+--- a/Minecraft.World/Recipes.h
++++ b/Minecraft.World/Recipes.h
+@@ -96,6 +96,9 @@ public:
+ 	shared_ptr<ItemInstance> getItemForRecipe(Recipy *r);
+ 	Recipy::INGREDIENTS_REQUIRED *getRecipeIngredientsArray();
+ 
++	// ForgedLCE: rebuild the crafting menu cache after mods add recipes.
++	void flceRebuildIngredientsArray();
++
+ private:
+ 	void buildRecipeIngredientsArray();
+ 	Recipy::INGREDIENTS_REQUIRED *m_pRecipeIngredientsRequired;

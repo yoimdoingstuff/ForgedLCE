@@ -1,0 +1,24 @@
+diff --git a/Minecraft.World/Minecraft.World.cpp b/Minecraft.World/Minecraft.World.cpp
+index 8eb642e..bd2c249 100644
+--- a/Minecraft.World/Minecraft.World.cpp
++++ b/Minecraft.World/Minecraft.World.cpp
+@@ -38,6 +38,7 @@
+ #include "McRegionChunkStorage.h"
+ #include "Villager.h"
+ #include "LevelSettings.h"
++#include "FLCE_Hooks.h" // ForgedLCE
+ 
+ #ifdef _DURANGO
+ #include "DurangoStats.h"
+@@ -77,6 +78,11 @@ void MinecraftWorld_RunStaticCtors()
+ 		EntityIO::staticCtor();
+ 		MobCategory::staticCtor();
+ 
++		// ForgedLCE: load mods and run preInit/init/postInit. Every vanilla
++		// registry exists by now; Item::staticInit below builds stats for
++		// mod items too.
++		ForgedLCE::OnStaticCtors();
++
+ 		Item::staticInit();
+ 		LevelChunk::staticCtor();
+ 

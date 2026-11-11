@@ -1,0 +1,148 @@
+# OPTIONAL: builds the real Windows64 game with ForgedLCE installed. Needs the
+# LCE source in a separate private repo (docs/CI.md), so it only runs when
+# started by hand. The everyday build is standalone.yml, which needs no game
+# source at all.
+#
+# Console builds need the console SDKs and can't run on GitHub-hosted runners.
+
+name: Build Windows64 game (needs LCE source)
+
+on:
+  workflow_dispatch:
+    inputs:
+      toolset:
+        description: "v110 = Visual Studio 2012, what the game uses (installed during the run). v143 = the runner's VS2022 with legacy-compatibility flags (fallback)."
+        type: choice
+        options: [v110, v143]
+        default: v110
+      configuration:
+        description: Build configuration
+        type: choice
+        options: [Release, Debug]
+        default: Release
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 240
+    env:
+      TOOLSET: ${{ inputs.toolset || 'v110' }}
+      CONFIGURATION: ${{ inputs.configuration || 'Release' }}
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - name: Check secrets
+        env:
+          LCE_SOURCE_REPO: ${{ secrets.LCE_SOURCE_REPO }}
+          LCE_SOURCE_TOKEN: ${{ secrets.LCE_SOURCE_TOKEN }}
+        run: |
+          if (-not $env:LCE_SOURCE_REPO -or -not $env:LCE_SOURCE_TOKEN) {
+            Write-Output "::error::Set the LCE_SOURCE_REPO and LCE_SOURCE_TOKEN repository secrets (see docs/CI.md)."
+            exit 1
+          }
+
+      - name: Check out ForgedLCE
+        uses: actions/checkout@v4
+        with:
+          path: ForgedLCE
+
+      - name: Check out LCE source (private)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.LCE_SOURCE_REPO }}
+          token: ${{ secrets.LCE_SOURCE_TOKEN }}
+          path: lce
+          # The known copy of the source has LFS pointer files but no LFS
+          # objects; fetching would fail. Set to true once the real
+          # libraries are in the repo's LFS storage.
+          lfs: false
+
+      - name: Install ForgedLCE into the source
+        run: |
+          New-Item -ItemType Directory -Force logs | Out-Null
+          .\ForgedLCE\scripts\apply.ps1 -LceRoot .\lce -StaticMods .\ForgedLCE\examples\ExampleMod
+
+      - name: Check for real prebuilt libraries
+        id: libs
+        run: |
+          $lib = '.\lce\Minecraft.Client\Windows64\4JLibs\libs\4J_Render_PC.lib'
+          $real = (Test-Path $lib) -and ((Get-Item $lib).Length -gt 1024)
+          if ($real) {
+            "link=true" >> $env:GITHUB_OUTPUT
+            Write-Output "Prebuilt libraries present: full build including link."
+          } else {
+            "link=false" >> $env:GITHUB_OUTPUT
+            Write-Output "::warning::The 4J/Iggy/Miles .lib files are Git LFS pointers, not real libraries. Compiling only; the game can't be linked (see docs/RECON.md)."
+          }
+
+      # ---------------------------------------------------------- toolset
+      - name: Install Visual Studio 2012 (v110)
+        if: env.TOOLSET == 'v110'
+        run: |
+          # VS Express 2012 for Windows Desktop includes the x64 v110 compiler.
+          choco install visualstudio2012wdx -y --no-progress --execution-timeout 5400
+          $cl = "${env:ProgramFiles(x86)}\Microsoft Visual Studio 11.0\VC\bin\x86_amd64\cl.exe"
+          $targets = "${env:ProgramFiles(x86)}\MSBuild\Microsoft.Cpp\v4.0\V110\Platforms\x64"
+          if (-not (Test-Path $cl) -or -not (Test-Path $targets)) {
+            Write-Output "::error::VS2012 install did not provide the x64 v110 toolset ($cl / $targets). Re-run with toolset v143 as a fallback."
+            exit 1
+          }
+          & $cl 2>&1 | Select-Object -First 1
+          # VS2012-era MSBuild (from .NET 4) drives the v110 toolset.
+          "MSBUILD=$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe" >> $env:GITHUB_ENV
+          "MSBUILD_ARGS=/p:VisualStudioVersion=11.0" >> $env:GITHUB_ENV
+
+      - name: Set up VS2022 MSBuild (v143 fallback)
+        if: env.TOOLSET == 'v143'
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Configure v143
+        if: env.TOOLSET == 'v143'
+        run: |
+          "MSBUILD=msbuild" >> $env:GITHUB_ENV
+          "MSBUILD_ARGS=/p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0" >> $env:GITHUB_ENV
+
+      # ------------------------------------------------------------ build
+      # Windows64 is the MSBuild platform "x64" in both projects.
+      - name: Build Minecraft.World (static library, includes the loader and built-in mods)
+        run: |
+          $props = (Resolve-Path .\ForgedLCE\ci\ci-build.props).Path
+          & $env:MSBUILD .\lce\Minecraft.World\Minecraft.World.vcxproj /m /nologo /v:minimal `
+            "/p:Configuration=$env:CONFIGURATION" /p:Platform=x64 $env:MSBUILD_ARGS.Split(' ') `
+            "/p:ForceImportBeforeCppTargets=$props" `
+            "/flp:logfile=$PWD\logs\world.log;verbosity=normal"
+          exit $LASTEXITCODE
+
+      # Runs even if Minecraft.World failed, so one run shows every error.
+      - name: Build Minecraft.Client
+        if: always() && steps.libs.outcome == 'success' && env.MSBUILD != ''
+        run: |
+          $props = (Resolve-Path .\ForgedLCE\ci\ci-build.props).Path
+          # Without the real prebuilt libraries only the compile step can run.
+          $target = if ('${{ steps.libs.outputs.link }}' -eq 'true') { 'Build' } else { 'ClCompile' }
+          Write-Output "MSBuild target: $target"
+          & $env:MSBUILD .\lce\Minecraft.Client\Minecraft.Client.vcxproj /m /nologo /v:minimal "/t:$target" `
+            "/p:Configuration=$env:CONFIGURATION" /p:Platform=x64 $env:MSBUILD_ARGS.Split(' ') `
+            "/p:ForceImportBeforeCppTargets=$props" `
+            "/flp:logfile=$PWD\logs\client.log;verbosity=normal"
+          exit $LASTEXITCODE
+
+      # Logs only: never upload game binaries or source, which artifacts
+      # would expose to anyone who can read this repo.
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ env.TOOLSET }}-${{ env.CONFIGURATION }}
+          path: logs/
+          if-no-files-found: ignore
+          retention-days: 14

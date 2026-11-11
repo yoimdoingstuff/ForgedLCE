@@ -1,0 +1,28 @@
+diff --git a/Minecraft.Client/ServerPlayerGameMode.cpp b/Minecraft.Client/ServerPlayerGameMode.cpp
+index b2fae39..6549f88 100644
+--- a/Minecraft.Client/ServerPlayerGameMode.cpp
++++ b/Minecraft.Client/ServerPlayerGameMode.cpp
+@@ -12,6 +12,7 @@
+ #include "..\Minecraft.World\net.minecraft.world.level.dimension.h"
+ #include "MultiPlayerLevel.h"
+ #include "LevelRenderer.h"
++#include "..\Minecraft.World\FLCE_Hooks.h" // ForgedLCE
+ 
+ ServerPlayerGameMode::ServerPlayerGameMode(Level *level)
+ {
+@@ -235,7 +236,14 @@ bool ServerPlayerGameMode::destroyBlock(int x, int y, int z)
+ 
+     int t = level->getTile(x, y, z);
+     int data = level->getData(x, y, z);
+-        
++
++	// ForgedLCE: BlockBreak event, cancelable. PlayerConnection re-sends the
++	// tile to the client when the block is still there, so it stays in sync.
++	if (ForgedLCE::OnBlockBreak(level, player, x, y, z, t, data))
++	{
++		return false;
++	}
++
+     level->levelEvent(player, LevelEvent::PARTICLES_DESTROY_BLOCK, x, y, z, t + (level->getData(x, y, z) << Tile::TILE_NUM_SHIFT));
+         
+ 	// 4J - In creative mode, the point where we need to tell the renderer that we are about to destroy a tile via destroyingTileAt is quite complicated.

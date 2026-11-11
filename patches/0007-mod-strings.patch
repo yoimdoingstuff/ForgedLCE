@@ -1,0 +1,25 @@
+diff --git a/Minecraft.Client/StringTable.cpp b/Minecraft.Client/StringTable.cpp
+index dc57916..6b3ff5b 100644
+--- a/Minecraft.Client/StringTable.cpp
++++ b/Minecraft.Client/StringTable.cpp
+@@ -1,5 +1,6 @@
+ #include "StdAfx.h"
+ #include "StringTable.h"
++#include "..\Minecraft.World\FLCE_Hooks.h" // ForgedLCE
+ 
+ StringTable::StringTable(void)
+ {
+@@ -149,6 +150,13 @@ LPCWSTR StringTable::getString(const wstring &id)
+ 
+ LPCWSTR StringTable::getString(int id)
+ {
++	// ForgedLCE: names of mod blocks and items
++	if (id >= ForgedLCE::STRING_ID_BASE)
++	{
++		LPCWSTR modString = ForgedLCE::GetModString(id);
++		return modString != NULL ? modString : L"";
++	}
++
+ #ifndef _CONTENT_PACKAGE
+ 	if (!isStatic)
+ 	{
