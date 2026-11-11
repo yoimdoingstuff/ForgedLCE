@@ -1,7 +1,9 @@
 // ForgedLCE fake game layer: simple models of the LCE classes in FakeGame.h.
 #include "stdafx.h"
 #include "FakeGame.h"
+#ifndef FLCE_FAKE_RETAIL
 #include "FLCE_Hooks.h"
+#endif
 
 FakeApp app;
 
@@ -69,8 +71,10 @@ bool Level::addEntity(shared_ptr<Entity> e)
 {
     if (e.get() == NULL) return false;
 
+#ifndef FLCE_FAKE_RETAIL
     // ForgedLCE: EntityJoinWorld event, cancelable (same as patch 0004)
     if (ForgedLCE::OnEntityJoinWorld(this, e)) return false;
+#endif
 
     fake_entities.push_back(e);
     return true;
@@ -223,6 +227,14 @@ void Recipes::staticCtor()
     instance = new Recipes();
 }
 
+size_t Recipes::fake_recipiesOffset()
+{
+    // Member offset without constructing a Recipes (its constructor adds recipes).
+    union { char bytes[sizeof(Recipes)]; double align; } storage;
+    Recipes *r = reinterpret_cast<Recipes *>(storage.bytes);
+    return (size_t)(reinterpret_cast<char *>(&r->recipies) - storage.bytes);
+}
+
 void Recipes::flceRebuildIngredientsArray()
 {
     fake_ingredientsArraySize = recipies->size();
@@ -245,16 +257,43 @@ void FurnaceRecipes::addFurnaceRecipy(int itemId, ItemInstance *result, float va
 
 LPCWSTR StringTable::getString(int id)
 {
+#ifndef FLCE_FAKE_RETAIL
     // ForgedLCE: names of mod blocks and items (same as patch 0007)
     if (id >= ForgedLCE::STRING_ID_BASE)
     {
         LPCWSTR modString = ForgedLCE::GetModString(id);
         return modString != NULL ? modString : L"";
     }
-    return L"vanilla string";
+#endif
+    return id >= 0x40000000 ? L"<missing>" : L"vanilla string";
+}
+
+// ---------------------------------------------------------------- game mode
+
+bool ServerPlayerGameMode::destroyBlock(int x, int y, int z)
+{
+    int t = level->getTile(x, y, z);
+    int data = level->getData(x, y, z);
+#ifndef FLCE_FAKE_RETAIL
+    // ForgedLCE: BlockBreak event, cancelable (same as patch 0005)
+    if (ForgedLCE::OnBlockBreak(level, player, x, y, z, t, data)) return false;
+#else
+    (void)t; (void)data;
+#endif
+    return level->setTile(x, y, z, 0);
 }
 
 // ---------------------------------------------------------------- startup
+
+void *MobCategory_monster = NULL;
+
+void MobCategory_staticCtor()
+{
+    static int monster;
+    MobCategory_monster = &monster;
+}
+
+void (*g_fakeSlot_MobCategory_staticCtor)() = &MobCategory_staticCtor;
 
 void MinecraftWorld_RunStaticCtors()
 {
@@ -264,6 +303,12 @@ void MinecraftWorld_RunStaticCtors()
     FurnaceRecipes::staticCtor();
     Recipes::staticCtor();
 
+#ifdef FLCE_FAKE_RETAIL
+    // No patches: an injected hook may have redirected this call.
+    g_fakeSlot_MobCategory_staticCtor();
+#else
+    MobCategory_staticCtor();
     // ForgedLCE hook (patch 0002)
     ForgedLCE::OnStaticCtors();
+#endif
 }

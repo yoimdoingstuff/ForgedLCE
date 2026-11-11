@@ -81,3 +81,26 @@ jobs:
           name: ExampleMod-dll
           path: build/bin/Release/mods/ExampleMod.dll
           retention-days: 14
+
+  # The PS Vita plugin, compiled with the free VitaSDK. It has never run on a
+  # Vita, so a failure here doesn't fail the workflow (yet).
+  vita-plugin:
+    name: PS Vita plugin (VitaSDK, compile only)
+    runs-on: ubuntu-latest
+    container: vitasdk/vitasdk:latest
+    continue-on-error: true
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ForgedLCE.suprx
+        run: |
+          cmake -S inject/vita -B build-vita
+          cmake --build build-vita
+
+      - name: Upload ForgedLCE.suprx
+        uses: actions/upload-artifact@v4
+        with:
+          name: ForgedLCE-vita-plugin
+          path: build-vita/ForgedLCE.suprx
+          retention-days: 14

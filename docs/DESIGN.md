@@ -41,6 +41,33 @@ Consoles can't load arbitrary code at runtime, so built-in mods are the only opt
 
 Each mod is its own translation unit, so mods can't clash with each other. The table references every entry point, so the linker keeps them even though `Minecraft.World` is a static library. Each mod folder gets its own copy of `forgedlce/*.h`, because GCC-style console compilers search only the including file's folder for `#include "..."`.
 
+## Architecture: core, platform, backend
+
+The loader is split so the same code can run compiled into the game **or** injected into the compiled game as a plugin:
+
+```
+             mods (C ABI: ForgedLCE.h)       data mods (forgedlce.json)
+                          \                     /
+   core   loader/FLCE_Loader, FLCE_Events, FLCE_Registry, FLCE_DataMods, FLCE_Json
+          (discovery, lifecycle, IDs, validation, events: never touches game classes)
+            |                                  |
+   FLCE_Platform.h                       FLCE_Backend.h
+   files, log, module loading            create blocks/items/recipes, world access
+            |                                  |
+   source build:  FLCE_PlatformGame       FLCE_GameSource   (game C++ classes;
+                                                             hooks called by patches)
+   plugin:        FLCE_Plugin360 /        FLCE_GameInjected (calls the compiled game
+                  FLCE_PluginVita                           through an address map;
+                                                            hooks from FLCE_InjectHooks)
+```
+
+**Injected mode** (`inject/`): the plugin reads an **address map** (`inject/addresses/*.txt`, one per game version) with about 60 function addresses, variable addresses, sizes and offsets. A version check makes it refuse maps for other versions. It then:
+- calls game member functions as plain functions with `this` first, which matches the member calling convention on PowerPC, ARM and x86-64
+- builds `std::wstring` arguments with the game's own constructor and destructor, so layout, allocator and character width always match the game's
+- hooks `MobCategory::staticCtor` (the point where patch 0002 sits) to load mods, plus the name, tick, block-break and entity-join functions, which are the injected equivalents of patches 0004–0008
+
+The hooking itself is per platform: on the Xbox 360, PowerPC detours (`FLCE_HookPPC`, a pure and unit-tested encoder that rewrites prologue `bl`s as absolute calls); on the Vita, taiHEN. The tests use a simulated engine that redirects the fake game's call slots.
+
 ## Repo layout
 
 ForgedLCE never contains LCE source. The game source is licensed, so this repo holds only our own code plus patches, the same way Forge ships patches instead of Minecraft code.
@@ -66,12 +93,12 @@ docs/                             RECON.md (findings) and this file
 
 There is one hook in `MinecraftWorld_RunStaticCtors()`, after `MobCategory::staticCtor()` and before `Item::staticInit()`. It runs on every platform:
 
-1. Load the ID map (Windows64 only).
-2. **Discover.** Built-in mods come first, in their fixed order, then DLL mods (Windows64). Invalid or duplicate mod IDs are rejected.
-3. **preInit** for every mod: register blocks, items, and event handlers.
+1. Load the ID map (anywhere with a mods folder).
+2. **Discover.** Built-in mods first, in their fixed order; then code-mod modules from the mods folder (`.dll`, or `.xex` / `.suprx` in the plugins); then data mods (subfolders with a `forgedlce.json`). Invalid or duplicate mod IDs are rejected.
+3. **preInit** for every mod: register blocks, items, and event handlers. A data mod registers its items before its blocks.
 4. **init**: recipes and smelting.
 5. **postInit**: work that depends on other mods.
-6. Save the ID map (Windows64) and rebuild the console crafting menu cache.
+6. Save the ID map and rebuild the console crafting menu cache.
 
 ## Events (v0)
 
@@ -94,8 +121,10 @@ Handlers run in priority order (HIGHEST to LOWEST), then in registration order. 
 
 ## Not done yet (in order)
 
-1. **Compiling and testing on each platform.** The development machine has no compiler, so everything so far has been checked by reading code. The console SDKs are needed for the console builds.
-2. A per-world ID map in the save, plus a mod-list check when joining multiplayer games.
-3. Custom textures (the stitched atlas must accept mod images on every platform).
-4. Block IDs above 255 (chunk storage, save format, packets).
-5. Entities (needs an `eINSTANCEOF` strategy), tile entities, GUIs.
+1. **Running on real hardware.** Everything platform-neutral is compiled and tested on a PC. The console plugins' entry code and the source patches inside the real game have never been compiled with the console SDKs or run.
+2. **Address maps** for real game versions (docs/FINDING_ADDRESSES.md). Without one, the plugins do nothing.
+3. **Plugin callbacks and custom drops:** overriding game virtual functions from the plugin (cloning a `Tile` vtable and replacing slots).
+4. A per-world ID map in the save, plus a mod-list check when joining multiplayer games.
+5. Custom textures (the stitched atlas must accept mod images on every platform).
+6. Block IDs above 255 (chunk storage, save format, packets).
+7. Entities (needs an `eINSTANCEOF` strategy), tile entities, GUIs.

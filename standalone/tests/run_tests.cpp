@@ -4,6 +4,7 @@
 // Exit code 0 = all checks passed.
 #include "stdafx.h"
 #include "FakeGame.h"
+#include "FLCE_Hooks.h"
 #include "FLCE_Internal.h"
 #include "TestModState.h"
 #include "forgedlce/ForgedLCE.hpp"
@@ -51,7 +52,7 @@ std::string loaderLog()
 {
 #ifdef _WINDOWS64
     std::string text;
-    FILE *f = _wfopen((ForgedLCE::ModsDir() + L"forgedlce.log").c_str(), L"rb");
+    FILE *f = _wfopen((ForgedLCE::Platform::ModsDir() + L"forgedlce.log").c_str(), L"rb");
     if (f != NULL) {
         char buf[4096];
         size_t n;
@@ -72,10 +73,21 @@ bool logHas(const char *text)
 }
 
 #ifdef _WINDOWS64
+void writeModFile(const std::wstring &modsDir, const wchar_t *folder, const char *json)
+{
+    std::wstring dir = modsDir + folder + L"\\";
+    CreateDirectoryW(dir.c_str(), NULL);
+    FILE *f = _wfopen((dir + L"forgedlce.json").c_str(), L"wb");
+    if (f != NULL) {
+        fputs(json, f);
+        fclose(f);
+    }
+}
+
 std::string readIdFile()
 {
     std::string text;
-    FILE *f = _wfopen((ForgedLCE::ModsDir() + L"forgedlce_ids.txt").c_str(), L"rb");
+    FILE *f = _wfopen((ForgedLCE::Platform::ModsDir() + L"forgedlce_ids.txt").c_str(), L"rb");
     if (f != NULL) {
         char buf[4096];
         size_t n;
@@ -104,7 +116,7 @@ int main()
 
 #ifdef _WINDOWS64
     // Pre-seed the id map: a missing mod holds 146, and the wand has a saved id.
-    std::wstring modsDir = ForgedLCE::ModsDir();
+    std::wstring modsDir = ForgedLCE::Platform::ModsDir();
     CreateDirectoryW(modsDir.c_str(), NULL);
     FILE *ids = _wfopen((modsDir + L"forgedlce_ids.txt").c_str(), L"wt");
     CHECK(ids != NULL);
@@ -113,9 +125,38 @@ int main()
         fclose(ids);
     }
     const int EXAMPLE_BLOCK = 147, WAND = 5000, BLOCK_A = 148, ITEM_A = 4096, DLL_BLOCK = 149;
-    std::cout << "Platform path: Windows64 (DLL mods + id file)" << std::endl;
+    const int DATA_MOD_RECIPES = 2;
+    std::cout << "Platform path: Windows64 (DLL mods + data mods + id file)" << std::endl;
+
+    // Data mods (forgedlce.json, no code).
+    writeModFile(modsDir, L"rubymod",
+        "{\n"
+        "  \"modId\": \"rubymod\", \"name\": \"Ruby Mod\", \"version\": \"1.2\",\n"
+        "  \"items\": [ { \"name\": \"ruby\", \"displayName\": \"Rub\\u00ed \xC3\xA9\", \"texture\": \"emerald\" } ],\n"
+        "  \"blocks\": [\n"
+        "    { \"name\": \"ruby_block\", \"displayName\": \"Block of Ruby\", \"material\": \"metal\", \"sound\": \"metal\",\n"
+        "      \"hardness\": 5, \"resistance\": 10, \"light\": 15, \"texture\": \"blockEmerald\" },\n"
+        "    { \"name\": \"ruby_ore\", \"displayName\": \"Ruby Ore\", \"hardness\": 3, \"drops\": \"ruby\", \"dropCount\": 2,\n"
+        "      \"texture\": \"oreEmerald\" }\n"
+        "  ],\n"
+        "  \"recipes\": [\n"
+        "    { \"type\": \"shaped\", \"result\": \"ruby_block\", \"pattern\": [\"RRR\", \"RRR\", \"RRR\"], \"key\": { \"R\": \"ruby\" } },\n"
+        "    { \"type\": \"shapeless\", \"result\": \"ruby\", \"count\": 9, \"ingredients\": [\"ruby_block\"] },\n"
+        "    { \"type\": \"shapeless\", \"result\": \"ruby\", \"ingredients\": [\"nope\"] }\n"
+        "  ],\n"
+        "  \"smelting\": [ { \"input\": \"ruby_ore\", \"result\": \"ruby\", \"xp\": 1.0 } ]\n"
+        "}\n");
+    writeModFile(modsDir, L"brokenmod",
+        "{ \"modId\": \"brokenmod\",\n"
+        "  \"items\": [ { \"name\": \"x\" } ]\n"
+        "  \"blocks\": [] }\n");                           // missing comma on line 2
+    writeModFile(modsDir, L"typomod",
+        "{ \"modId\": \"typomod\", \"blocks\": [ { \"name\": \"b\", \"hardnes\": 2, \"material\": \"lava\" } ] }\n");
+    writeModFile(modsDir, L"codeonly",                     // apply.ps1 manifest: not a data mod
+        "{ \"modId\": \"codeonly\", \"source\": \"CodeOnly.cpp\" }\n");
 #else
     const int EXAMPLE_BLOCK = 146, WAND = 4096, BLOCK_A = 147, ITEM_A = 4097;
+    const int DATA_MOD_RECIPES = 0;
     std::cout << "Platform path: console (built-in mods only)" << std::endl;
 #endif
 
@@ -182,9 +223,9 @@ int main()
     CHECK_EQ(S.exampleBlockSeenInPostInit, exampleBlock);
 
     // ---- recipes ----------------------------------------------------
-    // 2 vanilla + 2 ExampleMod + 2 test mod
-    CHECK_EQ(Recipes::getInstance()->getRecipies()->size(), 6);
-    CHECK_EQ(Recipes::getInstance()->fake_ingredientsArraySize, 6);   // crafting cache rebuilt
+    // 2 vanilla + 2 ExampleMod + 2 test mod (+ 2 from the ruby data mod)
+    CHECK_EQ(Recipes::getInstance()->getRecipies()->size(), 6 + DATA_MOD_RECIPES);
+    CHECK_EQ(Recipes::getInstance()->fake_ingredientsArraySize, 6 + DATA_MOD_RECIPES); // crafting cache rebuilt
     ShapedRecipy *blockRecipe = findShaped(exampleBlock);
     CHECK(blockRecipe != NULL);
     if (blockRecipe != NULL) {
@@ -285,6 +326,51 @@ int main()
     CHECK(logHas("Found mod dllmod"));
     CHECK_EQ(ForgedLCE::Registry::FindId(L"dllmod:dll_block"), DLL_BLOCK);
     CHECK(logHas("duplicate modId examplemod"));                  // ExampleMod.dll vs. built-in
+
+    // ---- Windows64 only: data mods ----------------------------------
+    CHECK(logHas("Found mod rubymod 1.2"));
+    int ruby = ForgedLCE::Registry::FindId(L"rubymod:ruby");
+    int rubyBlock = ForgedLCE::Registry::FindId(L"rubymod:ruby_block");
+    int rubyOre = ForgedLCE::Registry::FindId(L"rubymod:ruby_ore");
+    CHECK(ruby >= 4096 && Item::items[ruby] != NULL);
+    CHECK(rubyBlock > 0 && rubyBlock < 256 && Tile::tiles[rubyBlock] != NULL);
+    CHECK(rubyOre > 0 && rubyOre < 256 && Tile::tiles[rubyOre] != NULL);
+    if (ruby > 0 && Item::items[ruby] != NULL) {
+        // "Rubí \xC3\xA9" in the file: one \u escape and one raw UTF-8 character.
+        CHECK(wideEq(StringTable().getString(Item::items[ruby]->fake_descriptionId), L"Rub\x00ED \x00E9"));
+        CHECK(Item::items[ruby]->fake_textureName == L"emerald");
+    }
+    if (rubyBlock > 0 && Tile::tiles[rubyBlock] != NULL) {
+        Tile *rb = Tile::tiles[rubyBlock];
+        CHECK(rb->fake_destroySpeed == 5.0f);
+        CHECK(rb->fake_material == Material::metal);
+        CHECK(rb->fake_soundType == Tile::SOUND_METAL);
+        CHECK_EQ(Tile::lightEmission[rubyBlock], 15);
+        CHECK(wideEq(StringTable().getString(rb->getDescriptionId()), L"Block of Ruby"));
+        CHECK(Item::items[rubyBlock] != NULL);                     // TileItem
+    }
+    if (rubyOre > 0 && Tile::tiles[rubyOre] != NULL) {
+        Random random;
+        CHECK_EQ(Tile::tiles[rubyOre]->getResource(0, &random, 0), ruby);  // drops the ruby item
+        CHECK_EQ(Tile::tiles[rubyOre]->getResourceCount(&random), 2);
+        CHECK(Tile::tiles[rubyOre]->fake_material == Material::stone);    // default
+    }
+    ShapedRecipy *rubyBlockRecipe = findShaped(rubyBlock);
+    CHECK(rubyBlockRecipe != NULL && rubyBlockRecipe->fake_width == 3 && rubyBlockRecipe->fake_items[4] != NULL &&
+          rubyBlockRecipe->fake_items[4]->id == ruby);
+    CHECK(FurnaceRecipes::getInstance()->fake_results.count(rubyOre) == 1 &&
+          FurnaceRecipes::getInstance()->fake_results[rubyOre]->id == ruby);
+    CHECK(logHas("nothing is registered as \"rubymod:nope\""));     // bad reference: recipe skipped
+
+    CHECK(logHas("brokenmod"));
+    CHECK(logHas("line 3: expected ',' or '}'"));                 // syntax error reported with its line
+    CHECK(ForgedLCE::Registry::FindId(L"brokenmod:x") == -1);
+
+    CHECK(logHas("unknown key \"hardnes\""));                     // typo warning
+    CHECK(logHas("unknown material, using stone"));
+    CHECK(ForgedLCE::Registry::FindId(L"typomod:b") > 0);         // still registered
+
+    CHECK(loaderLog().find("Found mod codeonly") == std::string::npos); // apply.ps1 manifest ignored
 #endif
 
     std::cout << std::endl << "Loader log:" << std::endl << loaderLog() << std::endl;

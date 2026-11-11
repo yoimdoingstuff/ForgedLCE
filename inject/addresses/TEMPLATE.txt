@@ -1,0 +1,267 @@
+# ForgedLCE address map TEMPLATE
+#
+# Copy this file, name it after the game version (for example xbox360-TU19.txt),
+# uncomment each line and fill in the value for that exact game version.
+# docs/FINDING_ADDRESSES.md explains how to find each value.
+#
+# Values: 0x8215A2C8 or 1234 (absolute), or 0:0x0015A2C9 (segment 0 + offset, PS Vita;
+# odd code addresses mean Thumb code). Every REQUIRED key must be present.
+
+game = Minecraft: <edition>, <version>
+
+# ---- Version check: the plugin refuses to run on any other game version ----
+
+# REQUIRED. Address of any instruction word in the game's code
+# check.address = 0x00000000
+
+# REQUIRED. The 32-bit word expected at check.address, as the CPU reads it
+# check.value = 0x00000000
+
+# ---- Hooks: game functions ForgedLCE intercepts ----------------------------
+
+# REQUIRED. MobCategory::staticCtor() (MobCategory.cpp). Mods load right after it returns, the same point as patch 0002
+# hook.MobCategory_staticCtor = 0x00000000
+
+# optional. StringTable::getString(int) (StringTable.cpp); on Xbox 360 CConsoleMinecraftApp::GetString(int) (Xbox/Xbox_App.cpp). Needed for mod block/item names
+# hook.GetString = 0x00000000
+
+# optional. Minecraft::tick(bool, bool) (Minecraft.cpp). Client tick event
+# hook.Minecraft_tick = 0x00000000
+
+# optional. MinecraftServer::tick() (MinecraftServer.cpp). Server tick event
+# hook.MinecraftServer_tick = 0x00000000
+
+# optional. ServerPlayerGameMode::destroyBlock(int, int, int) (ServerPlayerGameMode.cpp). Block break event
+# hook.ServerPlayerGameMode_destroyBlock = 0x00000000
+
+# optional. Level::addEntity(shared_ptr<Entity>) (Level.cpp). Entity join event; also needs abi.sharedPtrArgByPointer = 1
+# hook.Level_addEntity = 0x00000000
+
+# ---- Functions ForgedLCE calls ---------------------------------------------
+
+# REQUIRED. The game's operator new(size_t)
+# fn.operator_new = 0x00000000
+
+# REQUIRED. Tile::Tile(int id, Material *material, bool isSolidRender)
+# fn.Tile_ctor = 0x00000000
+
+# REQUIRED. Tile::setDestroyTime(float)
+# fn.Tile_setDestroyTime = 0x00000000
+
+# REQUIRED. Tile::setExplodeable(float)
+# fn.Tile_setExplodeable = 0x00000000
+
+# REQUIRED. Tile::setSoundType(const SoundType *)
+# fn.Tile_setSoundType = 0x00000000
+
+# REQUIRED. Tile::setLightEmission(float)
+# fn.Tile_setLightEmission = 0x00000000
+
+# REQUIRED. Tile::setTextureName(const wstring &)
+# fn.Tile_setTextureName = 0x00000000
+
+# REQUIRED. Tile::setDescriptionId(unsigned int)
+# fn.Tile_setDescriptionId = 0x00000000
+
+# REQUIRED. Tile::init() (base class version)
+# fn.Tile_init = 0x00000000
+
+# REQUIRED. TileItem::TileItem(int id)
+# fn.TileItem_ctor = 0x00000000
+
+# REQUIRED. Item::Item(int id)
+# fn.Item_ctor = 0x00000000
+
+# REQUIRED. Item::setTextureName(const wstring &)
+# fn.Item_setTextureName = 0x00000000
+
+# REQUIRED. Item::setMaxStackSize(int)
+# fn.Item_setMaxStackSize = 0x00000000
+
+# REQUIRED. Item::setMaxDamage(int)
+# fn.Item_setMaxDamage = 0x00000000
+
+# REQUIRED. Item::handEquipped()
+# fn.Item_handEquipped = 0x00000000
+
+# REQUIRED. Item::setDescriptionId(unsigned int)
+# fn.Item_setDescriptionId = 0x00000000
+
+# REQUIRED. ItemInstance::ItemInstance(int id, int count, int damage)
+# fn.ItemInstance_ctor = 0x00000000
+
+# REQUIRED. ShapedRecipy::ShapedRecipy(int, int, ItemInstance **, ItemInstance *, int)
+# fn.ShapedRecipy_ctor = 0x00000000
+
+# REQUIRED. ShapelessRecipy::ShapelessRecipy(ItemInstance *, vector<ItemInstance *> *, _eGroupType)
+# fn.ShapelessRecipy_ctor = 0x00000000
+
+# REQUIRED. vector<Recipy *>::push_back(Recipy *const &)
+# fn.RecipyPtrVector_push_back = 0x00000000
+
+# REQUIRED. vector<ItemInstance *>::push_back(ItemInstance *const &)
+# fn.ItemInstancePtrVector_push_back = 0x00000000
+
+# REQUIRED. Recipes::buildRecipeIngredientsArray() (rebuilds the crafting menu cache)
+# fn.Recipes_buildRecipeIngredientsArray = 0x00000000
+
+# REQUIRED. FurnaceRecipes::addFurnaceRecipy(int, ItemInstance *, float)
+# fn.FurnaceRecipes_addFurnaceRecipy = 0x00000000
+
+# REQUIRED. std::wstring::wstring(const wchar_t *), as compiled into the game
+# fn.wstring_ctor = 0x00000000
+
+# REQUIRED. std::wstring::~wstring(), as compiled into the game
+# fn.wstring_dtor = 0x00000000
+
+# REQUIRED. Level::getTile(int, int, int)
+# fn.Level_getTile = 0x00000000
+
+# REQUIRED. Level::getData(int, int, int)
+# fn.Level_getData = 0x00000000
+
+# REQUIRED. Level::setTileAndData(int, int, int, int, int)
+# fn.Level_setTileAndData = 0x00000000
+
+# optional. shared_ptr<Entity>::~shared_ptr(). Only with abi.calleeDestroysArgs = 1, to release a canceled entity
+# fn.EntitySharedPtr_dtor = 0x00000000
+
+# ---- Static variables (the address of the variable itself) -----------------
+
+# REQUIRED. Tile::tiles (the Tile ** variable itself)
+# data.Tile_tiles = 0x00000000
+
+# REQUIRED. Item::items (the ItemArray variable; its first word is the data pointer)
+# data.Item_items = 0x00000000
+
+# REQUIRED. Recipes::instance
+# data.Recipes_instance = 0x00000000
+
+# REQUIRED. FurnaceRecipes::instance
+# data.FurnaceRecipes_instance = 0x00000000
+
+# REQUIRED. Material::stone
+# data.Material_stone = 0x00000000
+
+# REQUIRED. Material::wood
+# data.Material_wood = 0x00000000
+
+# REQUIRED. Material::dirt
+# data.Material_dirt = 0x00000000
+
+# REQUIRED. Material::grass
+# data.Material_grass = 0x00000000
+
+# REQUIRED. Material::sand
+# data.Material_sand = 0x00000000
+
+# REQUIRED. Material::metal
+# data.Material_metal = 0x00000000
+
+# REQUIRED. Material::glass
+# data.Material_glass = 0x00000000
+
+# REQUIRED. Material::cloth
+# data.Material_cloth = 0x00000000
+
+# REQUIRED. Material::plant
+# data.Material_plant = 0x00000000
+
+# REQUIRED. Material::leaves
+# data.Material_leaves = 0x00000000
+
+# REQUIRED. Material::ice
+# data.Material_ice = 0x00000000
+
+# REQUIRED. Material::clay
+# data.Material_clay = 0x00000000
+
+# REQUIRED. Tile::SOUND_STONE
+# data.Tile_SOUND_stone = 0x00000000
+
+# REQUIRED. Tile::SOUND_WOOD
+# data.Tile_SOUND_wood = 0x00000000
+
+# REQUIRED. Tile::SOUND_GRAVEL
+# data.Tile_SOUND_gravel = 0x00000000
+
+# REQUIRED. Tile::SOUND_GRASS
+# data.Tile_SOUND_grass = 0x00000000
+
+# REQUIRED. Tile::SOUND_METAL
+# data.Tile_SOUND_metal = 0x00000000
+
+# REQUIRED. Tile::SOUND_GLASS
+# data.Tile_SOUND_glass = 0x00000000
+
+# REQUIRED. Tile::SOUND_CLOTH
+# data.Tile_SOUND_cloth = 0x00000000
+
+# REQUIRED. Tile::SOUND_SAND
+# data.Tile_SOUND_sand = 0x00000000
+
+# REQUIRED. Tile::SOUND_SNOW
+# data.Tile_SOUND_snow = 0x00000000
+
+# optional. MobCategory::monster: non-NULL once startup has passed the hook, so a plugin loaded too late can say so
+# data.LateCheck = 0x00000000
+
+# ---- Sizes of game types (in bytes) ----------------------------------------
+
+# REQUIRED. sizeof(Tile)
+# size.Tile = 0x00000000
+
+# REQUIRED. sizeof(TileItem)
+# size.TileItem = 0x00000000
+
+# REQUIRED. sizeof(Item)
+# size.Item = 0x00000000
+
+# REQUIRED. sizeof(ItemInstance)
+# size.ItemInstance = 0x00000000
+
+# REQUIRED. sizeof(ShapedRecipy)
+# size.ShapedRecipy = 0x00000000
+
+# REQUIRED. sizeof(ShapelessRecipy)
+# size.ShapelessRecipy = 0x00000000
+
+# REQUIRED. sizeof(vector<ItemInstance *>) (an all-zero vector must be a valid empty one)
+# size.vector = 0x00000000
+
+# REQUIRED. sizeof(std::wstring), at most 64
+# size.wstring = 0x00000000
+
+# ---- Struct member offsets (in bytes) --------------------------------------
+
+# REQUIRED. Recipes::recipies (the vector<Recipy *> * member)
+# offset.Recipes_recipies = 0x00000000
+
+# REQUIRED. Level::isClientSide (bool)
+# offset.Level_isClientSide = 0x00000000
+
+# REQUIRED. Entity::x (y and z follow as doubles)
+# offset.Entity_x = 0x00000000
+
+# optional. ServerPlayerGameMode::level. Needed by the destroyBlock hook
+# offset.ServerPlayerGameMode_level = 0x00000000
+
+# optional. ServerPlayerGameMode::player (a shared_ptr). Needed by the destroyBlock hook
+# offset.ServerPlayerGameMode_player = 0x00000000
+
+# optional. Offset of the raw pointer inside a shared_ptr (default 0)
+# offset.SharedPtr_raw = 0x00000000
+
+# optional. Offset of the Entity base inside Player (default 0)
+# offset.Player_entity = 0x00000000
+
+# ---- Calling-convention details --------------------------------------------
+
+# optional. 1 if a shared_ptr passed by value arrives as a pointer to it (default 0: Level_addEntity hook disabled)
+# abi.sharedPtrArgByPointer = 0x00000000
+
+# optional. 1 if the called function destroys by-value arguments (MSVC); then fn.EntitySharedPtr_dtor is used
+# abi.calleeDestroysArgs = 0x00000000
+
+# optional. Bytes per wchar_t in the game (2 or 4; default: the plugin's own). Mod names are converted when they differ
+# abi.wcharSize = 0x00000000

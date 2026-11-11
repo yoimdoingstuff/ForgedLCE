@@ -249,6 +249,10 @@ public:
 
     size_t fake_ingredientsArraySize; // size of the console crafting-menu cache
 
+    // For the injected-mode tests' address map.
+    static Recipes **fake_instanceAddress() { return &instance; }
+    static size_t fake_recipiesOffset();
+
 private:
     Recipes();
     static Recipes   *instance;
@@ -265,8 +269,24 @@ public:
     std::map<int, ItemInstance *> fake_results;
     std::map<int, float>          fake_xp;
 
+    static FurnaceRecipes **fake_instanceAddress() { return &instance; }
+
 private:
     static FurnaceRecipes *instance;
+};
+
+// ---------------------------------------------------------------- game mode
+
+class ServerPlayerGameMode
+{
+public:
+    ServerPlayerGameMode() : level(NULL) {}
+    Level             *level;
+    shared_ptr<Player> player;
+
+    // Contains ForgedLCE patch 0005 (BlockBreak) in source mode. Breaks the
+    // block (sets it to air) unless a handler cancels.
+    bool destroyBlock(int x, int y, int z);
 };
 
 // ---------------------------------------------------------------- strings
@@ -281,8 +301,18 @@ public:
 
 // ---------------------------------------------------------------- startup
 
+// Stand-in for MobCategory::staticCtor(). Sets MobCategory_monster, like the
+// real one sets MobCategory::monster.
+void MobCategory_staticCtor();
+extern void *MobCategory_monster;
+
 // Mirrors the order of the real MinecraftWorld_RunStaticCtors() up to the
-// ForgedLCE hook (patch 0002), then calls the hook.
+// ForgedLCE hook point.
+//  - Source mode: calls MobCategory_staticCtor, then the hook (patch 0002).
+//  - Retail mode (FLCE_FAKE_RETAIL, no patches): calls MobCategory_staticCtor
+//    through g_fakeSlot_MobCategory_staticCtor, which an injected hook
+//    redirects, the way a detour redirects the real call.
 void MinecraftWorld_RunStaticCtors();
+extern void (*g_fakeSlot_MobCategory_staticCtor)();
 
 #endif // FLCE_FAKEGAME_H

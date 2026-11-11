@@ -1,24 +1,32 @@
 diff --git a/Minecraft.World/Minecraft.World.vcxproj b/Minecraft.World/Minecraft.World.vcxproj
-index d364619..a268a2e 100644
+index d364619..4e9ca3e 100644
 --- a/Minecraft.World/Minecraft.World.vcxproj
 +++ b/Minecraft.World/Minecraft.World.vcxproj
-@@ -2650,6 +2650,10 @@
+@@ -2650,6 +2650,14 @@
      <ClInclude Include="ThreadName.h" />
      <ClInclude Include="ThrownEgg.h" />
      <ClInclude Include="TickNextTickData.h" />
++    <ClInclude Include="FLCE_Backend.h" />
 +    <ClInclude Include="FLCE_Hooks.h" />
 +    <ClInclude Include="FLCE_Internal.h" />
++    <ClInclude Include="FLCE_Json.h" />
++    <ClInclude Include="FLCE_Platform.h" />
++    <ClInclude Include="FLCE_Strings.h" />
 +    <ClInclude Include="ForgedLCE.h" />
 +    <ClInclude Include="ForgedLCE.hpp" />
      <ClInclude Include="Tile.h" />
      <ClInclude Include="TileEntity.h" />
      <ClInclude Include="TileEventPacket.h" />
-@@ -3778,6 +3782,26 @@
+@@ -3778,6 +3786,30 @@
      <ClCompile Include="ThreadName.cpp" />
      <ClCompile Include="ThrownEgg.cpp" />
      <ClCompile Include="TickNextTickData.cpp" />
++    <ClCompile Include="FLCE_DataMods.cpp" />
 +    <ClCompile Include="FLCE_Events.cpp" />
++    <ClCompile Include="FLCE_GameSource.cpp" />
++    <ClCompile Include="FLCE_Json.cpp" />
 +    <ClCompile Include="FLCE_Loader.cpp" />
++    <ClCompile Include="FLCE_PlatformGame.cpp" />
 +    <ClCompile Include="FLCE_Registry.cpp" />
 +    <ClCompile Include="FLCE_StaticMods.cpp" />
 +    <ClCompile Include="FLCE_StaticMod00.cpp" />

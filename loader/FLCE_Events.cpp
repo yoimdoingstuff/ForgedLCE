@@ -1,9 +1,7 @@
-// ForgedLCE event bus and the game-side event hooks.
+// ForgedLCE event bus (core). The game-side hooks that feed it live in the
+// backends: FLCE_GameSource.cpp (source builds) and inject/FLCE_InjectHooks.cpp
+// (injected builds).
 #include "stdafx.h"
-#include "net.minecraft.world.level.h"
-#include "net.minecraft.world.entity.h"
-#include "net.minecraft.world.entity.player.h"
-
 #include "FLCE_Internal.h"
 
 namespace ForgedLCE {
@@ -59,13 +57,7 @@ bool Post(FLCE_Event *event)
     return event->canceled != 0;
 }
 
-} // namespace Events
-
-// ---------------------------------------------------------------------
-// Hooks called from patched game code
-// ---------------------------------------------------------------------
-
-static void PostTick(int type, int phase)
+void PostTick(int type, int phase)
 {
     if (CurrentPhase() != PHASE_DONE) return;
     FLCE_TickEvent e;
@@ -73,43 +65,39 @@ static void PostTick(int type, int phase)
     e.base.cancelable = 0;
     e.base.canceled = 0;
     e.phase = phase;
-    Events::Post(&e.base);
+    Post(&e.base);
 }
 
-void OnClientTick(int phase) { PostTick(FLCE_EVENT_CLIENT_TICK, phase); }
-void OnServerTick(int phase) { PostTick(FLCE_EVENT_SERVER_TICK, phase); }
-
-bool OnBlockBreak(Level *level, shared_ptr<Player> player, int x, int y, int z, int tileId, int data)
+bool PostBlockBreak(FLCE_Level *level, FLCE_Entity *player, int x, int y, int z, int blockId, int blockData)
 {
     if (CurrentPhase() != PHASE_DONE) return false;
     FLCE_BlockBreakEvent e;
     e.base.type = FLCE_EVENT_BLOCK_BREAK;
     e.base.cancelable = 1;
     e.base.canceled = 0;
-    e.level = reinterpret_cast<FLCE_Level *>(level);
-    e.player = reinterpret_cast<FLCE_Entity *>(static_cast<Entity *>(player.get()));
+    e.level = level;
+    e.player = player;
     e.x = x; e.y = y; e.z = z;
-    e.blockId = tileId;
-    e.blockData = data;
-    return Events::Post(&e.base);
+    e.blockId = blockId;
+    e.blockData = blockData;
+    return Post(&e.base);
 }
 
-bool OnEntityJoinWorld(Level *level, shared_ptr<Entity> entity)
+bool PostEntityJoin(FLCE_Level *level, FLCE_Entity *entity, int isPlayer, double x, double y, double z)
 {
-    // .get(): comparing a shared_ptr with NULL doesn't compile with every
-    // platform's shared_ptr (e.g. C++03 tr1).
-    if (CurrentPhase() != PHASE_DONE || entity.get() == NULL) return false;
+    if (CurrentPhase() != PHASE_DONE || entity == NULL) return false;
     FLCE_EntityJoinWorldEvent e;
     e.base.type = FLCE_EVENT_ENTITY_JOIN_WORLD;
     e.base.cancelable = 1;
     e.base.canceled = 0;
-    e.level = reinterpret_cast<FLCE_Level *>(level);
-    e.entity = reinterpret_cast<FLCE_Entity *>(entity.get());
-    e.isPlayer = dynamic_pointer_cast<Player>(entity).get() != NULL ? 1 : 0;
-    e.x = entity->x;
-    e.y = entity->y;
-    e.z = entity->z;
-    return Events::Post(&e.base);
+    e.level = level;
+    e.entity = entity;
+    e.isPlayer = isPlayer;
+    e.x = x;
+    e.y = y;
+    e.z = z;
+    return Post(&e.base);
 }
 
+} // namespace Events
 } // namespace ForgedLCE

@@ -1,18 +1,14 @@
 // ForgedLCE loader core: mod discovery, lifecycle, the FLCE_Api table,
 // logging and mod display strings.
 //
-// Platforms:
-//  - every platform: mods compiled into the game (g_staticMods)
-//  - Windows64 only: additionally, DLL mods from the "mods" folder next to
-//    the game executable
+// Mods come from three places, in this order:
+//   1. built-in code mods compiled into the game (g_staticMods)
+//   2. code-mod modules in the mods folder (.dll / .xex / .suprx), where the
+//      platform can load them
+//   3. data mods: subfolders of the mods folder with a forgedlce.json
 #include "stdafx.h"
-#include "net.minecraft.world.level.h"
-#include "net.minecraft.world.level.tile.h"
-#include "net.minecraft.world.entity.h"
-
 #include "FLCE_Internal.h"
 
-#include <stdio.h>
 #include <string.h>
 
 namespace ForgedLCE {
@@ -20,8 +16,9 @@ namespace ForgedLCE {
 namespace {
 
 struct LoadedMod {
-    std::wstring source; // "static" or the DLL file name
-    FLCE_ModInfo info;
+    std::wstring       source;  // where it came from, for log messages
+    FLCE_ModInfo       info;
+    DataMods::DataMod *data;    // non-NULL for data mods
 };
 
 LoadPhase              g_phase = PHASE_NOT_STARTED;
@@ -29,13 +26,6 @@ std::vector<LoadedMod> g_mods;
 
 // Mod display strings. Written only during loading, read afterwards.
 std::vector<std::wstring> g_strings;
-
-// Log() can be called from the main and server threads.
-CRITICAL_SECTION g_logLock;
-bool             g_logLockReady = false;
-#ifdef _WINDOWS64
-FILE            *g_logFile = NULL;
-#endif
 
 const wchar_t *LevelName(int level)
 {
@@ -81,32 +71,33 @@ int FLCE_CALL Api_AddSmelting(int in, int out, int count, int data, float xp)
 
 int FLCE_CALL Api_GetBlock(FLCE_Level *l, int x, int y, int z)
 {
-    return l ? reinterpret_cast<Level *>(l)->getTile(x, y, z) : 0;
+    return l ? Backend::GetTile(l, x, y, z) : 0;
 }
 
 int FLCE_CALL Api_GetBlockData(FLCE_Level *l, int x, int y, int z)
 {
-    return l ? reinterpret_cast<Level *>(l)->getData(x, y, z) : 0;
+    return l ? Backend::GetData(l, x, y, z) : 0;
 }
 
 int FLCE_CALL Api_SetBlock(FLCE_Level *l, int x, int y, int z, int id, int data)
 {
     if (l == NULL || id < 0 || id > Registry::BLOCK_ID_MAX) return 0;
-    if (id != 0 && Tile::tiles[id] == NULL) return 0;
-    return reinterpret_cast<Level *>(l)->setTileAndData(x, y, z, id, data) ? 1 : 0;
+    if (id != 0 && !Backend::IdExists(id)) return 0;
+    return Backend::SetTile(l, x, y, z, id, data) ? 1 : 0;
 }
 
 int FLCE_CALL Api_IsClientSide(FLCE_Level *l)
 {
-    return l && reinterpret_cast<Level *>(l)->isClientSide ? 1 : 0;
+    return l && Backend::IsClientSide(l) ? 1 : 0;
 }
 
 void FLCE_CALL Api_GetEntityPos(FLCE_Entity *e, double *x, double *y, double *z)
 {
-    Entity *ent = reinterpret_cast<Entity *>(e);
-    if (x) *x = ent ? ent->x : 0.0;
-    if (y) *y = ent ? ent->y : 0.0;
-    if (z) *z = ent ? ent->z : 0.0;
+    double px = 0, py = 0, pz = 0;
+    if (e != NULL) Backend::GetEntityPos(e, &px, &py, &pz);
+    if (x) *x = px;
+    if (y) *y = py;
+    if (z) *z = pz;
 }
 
 FLCE_Api MakeApi()
@@ -131,26 +122,35 @@ FLCE_Api MakeApi()
     return api;
 }
 
-FLCE_Api g_api; // filled in OnStaticCtors, lives for the process
+FLCE_Api g_api; // filled in LoadAllMods, lives for the process
 
 // ---- discovery --------------------------------------------------------
 
-bool IsValidModId(const wchar_t *id)
+bool IsDuplicate(const wchar_t *modId, const std::wstring &source)
 {
-    if (id == NULL || id[0] == 0) return false;
-    for (const wchar_t *p = id; *p; ++p) {
-        bool ok = (*p >= L'a' && *p <= L'z') || (*p >= L'0' && *p <= L'9') || *p == L'_';
-        if (!ok) return false;
+    for (size_t i = 0; i < g_mods.size(); ++i) {
+        if (wcscmp(g_mods[i].info.modId, modId) == 0) {
+            Log(FLCE_LOG_ERROR, L"ForgedLCE", source + L": duplicate modId " + modId + L"; skipped");
+            return true;
+        }
     }
-    return true;
+    return false;
 }
 
-// Runs a mod's entry point and records it. Returns false if the mod
+void Announce(const LoadedMod &lm)
+{
+    std::wstring version = lm.info.version != NULL && lm.info.version[0] != 0
+                         ? std::wstring(L" ") + lm.info.version : std::wstring();
+    Log(FLCE_LOG_INFO, L"ForgedLCE", L"Found mod " + std::wstring(lm.info.modId) + version + L" (" + lm.source + L")");
+}
+
+// Runs a code mod's entry point and records it. Returns false if the mod
 // declined or is invalid.
-bool AddMod(FLCE_ModEntryFn entry, const std::wstring &source)
+bool AddCodeMod(FLCE_ModEntryFn entry, const std::wstring &source)
 {
     LoadedMod lm;
     lm.source = source;
+    lm.data = NULL;
     memset(&lm.info, 0, sizeof(lm.info));
     lm.info.structSize = sizeof(lm.info);
 
@@ -162,65 +162,90 @@ bool AddMod(FLCE_ModEntryFn entry, const std::wstring &source)
         Log(FLCE_LOG_ERROR, L"ForgedLCE", source + L": modId must be non-empty lowercase a-z, 0-9, _");
         return false;
     }
-    for (size_t i = 0; i < g_mods.size(); ++i) {
-        if (wcscmp(g_mods[i].info.modId, lm.info.modId) == 0) {
-            Log(FLCE_LOG_ERROR, L"ForgedLCE", source + L": duplicate modId " + lm.info.modId + L"; skipped");
-            return false;
-        }
-    }
+    if (IsDuplicate(lm.info.modId, source)) return false;
     g_mods.push_back(lm);
-    Log(FLCE_LOG_INFO, L"ForgedLCE", L"Found mod " + std::wstring(lm.info.modId) + L" " +
-        (lm.info.version ? lm.info.version : L"") + L" (" + source + L")");
+    Announce(lm);
     return true;
 }
 
 void DiscoverStaticMods()
 {
     for (const StaticMod *m = g_staticMods; m->modId != NULL; ++m) {
-        AddMod(m->entry, std::wstring(L"built in: ") + m->modId);
+        AddCodeMod(m->entry, std::wstring(L"built in: ") + m->modId);
     }
 }
 
-void DiscoverDllMods()
+void DiscoverModModules(const std::wstring &dir)
 {
-#ifdef _WINDOWS64
-    std::wstring dir = ModsDir();
-    WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileW((dir + L"*.dll").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) {
-        Log(FLCE_LOG_INFO, L"ForgedLCE", L"No DLL mods in " + dir);
-        return;
-    }
-    do {
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-        std::wstring path = dir + fd.cFileName;
+    const wchar_t *ext = Platform::ModModuleExtension();
+    if (ext == NULL || dir.empty()) return;
 
-        HMODULE mod = LoadLibraryW(path.c_str());
-        if (mod == NULL) {
-            Log(FLCE_LOG_ERROR, L"ForgedLCE", L"Could not load " + path);
-            continue;
+    std::vector<std::wstring> files;
+    Platform::ListDirectory(dir, false, files);
+    std::wstring wanted(ext);
+    for (size_t i = 0; i < files.size(); ++i) {
+        const std::wstring &name = files[i];
+        if (name.size() <= wanted.size()) continue;
+        // Case-insensitive extension match (ASCII).
+        bool match = true;
+        for (size_t k = 0; k < wanted.size(); ++k) {
+            wchar_t a = name[name.size() - wanted.size() + k], b = wanted[k];
+            if (a >= L'A' && a <= L'Z') a = (wchar_t)(a - L'A' + L'a');
+            if (b >= L'A' && b <= L'Z') b = (wchar_t)(b - L'A' + L'a');
+            if (a != b) { match = false; break; }
         }
-        FLCE_ModEntryFn entry = (FLCE_ModEntryFn)GetProcAddress(mod, FLCE_MOD_ENTRY_NAME);
+        if (!match) continue;
+
+        std::wstring error;
+        FLCE_ModEntryFn entry = Platform::LoadModModule(dir + name, error);
         if (entry == NULL) {
-            Log(FLCE_LOG_WARN, L"ForgedLCE", std::wstring(fd.cFileName) + L" has no flce_mod_entry export; skipped");
-            FreeLibrary(mod);
+            Log(FLCE_LOG_ERROR, L"ForgedLCE", name + L": " + error);
             continue;
         }
-        // Loaded mods are never unloaded: the game holds pointers into them.
-        if (!AddMod(entry, fd.cFileName)) FreeLibrary(mod);
-    } while (FindNextFileW(h, &fd));
-    FindClose(h);
-#endif
+        // Loaded modules are never unloaded: the game holds pointers into them.
+        AddCodeMod(entry, name);
+    }
+}
+
+void DiscoverDataMods(const std::wstring &dir)
+{
+    if (dir.empty()) return;
+    std::vector<std::wstring> folders;
+    Platform::ListDirectory(dir, true, folders);
+    for (size_t i = 0; i < folders.size(); ++i) {
+        std::wstring modDir = dir + folders[i] + Platform::PathSeparator();
+        DataMods::DataMod *dm = DataMods::Load(modDir, folders[i]);
+        if (dm == NULL) continue;
+
+        std::wstring source = folders[i] + Platform::PathSeparator() + L"forgedlce.json";
+        if (IsDuplicate(DataMods::ModId(dm), source)) continue; // DataMod is leaked; it's small
+
+        LoadedMod lm;
+        lm.source = source;
+        lm.data = dm;
+        memset(&lm.info, 0, sizeof(lm.info));
+        lm.info.structSize = sizeof(lm.info);
+        lm.info.modId   = DataMods::ModId(dm);
+        lm.info.name    = DataMods::Name(dm);
+        lm.info.version = DataMods::Version(dm);
+        g_mods.push_back(lm);
+        Announce(lm);
+    }
 }
 
 void RunPhase(LoadPhase phase)
 {
     g_phase = phase;
     for (size_t i = 0; i < g_mods.size(); ++i) {
-        const FLCE_ModInfo &info = g_mods[i].info;
-        FLCE_LifecycleFn fn = phase == PHASE_PREINIT ? info.preInit
-                            : phase == PHASE_INIT    ? info.init
-                            :                          info.postInit;
+        LoadedMod &mod = g_mods[i];
+        if (mod.data != NULL) {
+            if (phase == PHASE_PREINIT) DataMods::PreInit(mod.data);
+            else if (phase == PHASE_INIT) DataMods::Init(mod.data);
+            continue;
+        }
+        FLCE_LifecycleFn fn = phase == PHASE_PREINIT ? mod.info.preInit
+                            : phase == PHASE_INIT    ? mod.info.init
+                            :                          mod.info.postInit;
         if (fn != NULL) fn(&g_api);
     }
 }
@@ -231,20 +256,14 @@ void RunPhase(LoadPhase phase)
 
 LoadPhase CurrentPhase() { return g_phase; }
 
-std::wstring ModsDir()
+bool IsValidModId(const wchar_t *id)
 {
-#ifdef _WINDOWS64
-    wchar_t exe[MAX_PATH];
-    DWORD n = GetModuleFileNameW(NULL, exe, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) return std::wstring();
-    std::wstring dir(exe, n);
-    size_t slash = dir.find_last_of(L"\\/");
-    dir = slash == std::wstring::npos ? std::wstring() : dir.substr(0, slash + 1);
-    return dir + L"mods\\";
-#else
-    // Consoles: no user-writable mods folder; mods are built in.
-    return std::wstring();
-#endif
+    if (id == NULL || id[0] == 0) return false;
+    for (const wchar_t *p = id; *p; ++p) {
+        bool ok = (*p >= L'a' && *p <= L'z') || (*p >= L'0' && *p <= L'9') || *p == L'_';
+        if (!ok) return false;
+    }
+    return true;
 }
 
 std::wstring IntToString(int value)
@@ -260,26 +279,7 @@ std::wstring IntToString(int value)
 
 void Log(int level, const wchar_t *source, const std::wstring &message)
 {
-    std::wstring line = std::wstring(L"[ForgedLCE] [") + LevelName(level) + L"] [" + source + L"] " + message + L"\n";
-
-    if (g_logLockReady) EnterCriticalSection(&g_logLock);
-#ifdef _WINDOWS64
-    OutputDebugStringW(line.c_str());
-    if (g_logFile != NULL) {
-        fputws(line.c_str(), g_logFile);
-        fflush(g_logFile);
-    }
-#else
-    // Console debug output is narrow; non-ASCII characters become '?'.
-    std::string narrow;
-    narrow.reserve(line.size());
-    for (size_t i = 0; i < line.size(); ++i) {
-        wchar_t c = line[i];
-        narrow += (c > 0 && c < 128) ? (char)c : '?';
-    }
-    app.DebugPrintf("%s", narrow.c_str());
-#endif
-    if (g_logLockReady) LeaveCriticalSection(&g_logLock);
+    Platform::WriteLog(std::wstring(L"[ForgedLCE] [") + LevelName(level) + L"] [" + source + L"] " + message + L"\n");
 }
 
 unsigned int AddModString(const std::wstring &text)
@@ -288,6 +288,8 @@ unsigned int AddModString(const std::wstring &text)
     return (unsigned int)(STRING_ID_BASE + (int)g_strings.size() - 1);
 }
 
+size_t ModStringCount() { return g_strings.size(); }
+
 const wchar_t *GetModString(int id)
 {
     if (id < STRING_ID_BASE) return NULL;
@@ -295,30 +297,23 @@ const wchar_t *GetModString(int id)
     return index < g_strings.size() ? g_strings[index].c_str() : NULL;
 }
 
-void OnStaticCtors()
+void LoadAllMods()
 {
     if (g_phase != PHASE_NOT_STARTED) return;
+    g_phase = PHASE_CONSTRUCT;
 
-    InitializeCriticalSection(&g_logLock);
-    g_logLockReady = true;
-
-#ifdef _WINDOWS64
-    std::wstring dir = ModsDir();
-    if (!dir.empty()) {
-        CreateDirectoryW(dir.c_str(), NULL); // fine if it already exists
-        g_logFile = _wfopen((dir + L"forgedlce.log").c_str(), L"wt, ccs=UTF-8");
-    }
-#endif
-
-    Log(FLCE_LOG_INFO, L"ForgedLCE", L"Loader starting (API version " + IntToString(FLCE_API_VERSION) + L")");
+    Platform::Init();
+    Log(FLCE_LOG_INFO, L"ForgedLCE", L"Loader starting (API version " + IntToString(FLCE_API_VERSION) +
+        L", " + Backend::Name() + L" backend)");
 
     g_api = MakeApi();
-    g_phase = PHASE_CONSTRUCT;
     Registry::LoadIdMap();
 
     // Built-in mods first, so their ids are assigned in a fixed order.
+    std::wstring dir = Platform::ModsDir();
     DiscoverStaticMods();
-    DiscoverDllMods();
+    DiscoverModModules(dir);
+    DiscoverDataMods(dir);
 
     RunPhase(PHASE_PREINIT);
     RunPhase(PHASE_INIT);

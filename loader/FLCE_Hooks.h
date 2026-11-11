@@ -7,6 +7,10 @@
 // from different places on different platforms.
 #pragma once
 
+// GetModString() and STRING_ID_BASE, used by the string hooks (patches 0007
+// and 0008).
+#include "FLCE_Strings.h"
+
 class Level;
 class Entity;
 class Player;
@@ -41,12 +45,5 @@ private:
     TickScope(const TickScope &);
     TickScope &operator=(const TickScope &);
 };
-
-// StringTable::getString (behind CMinecraftApp::GetString). Returns NULL if
-// the id is not a ForgedLCE string.
-const wchar_t *GetModString(int id);
-
-// String ids at or above this belong to ForgedLCE.
-const int STRING_ID_BASE = 0x40000000;
 
 } // namespace ForgedLCE

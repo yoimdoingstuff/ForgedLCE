@@ -1,126 +1,18 @@
-// ForgedLCE registries: block/item creation, the name->id map, recipes.
+// ForgedLCE registry (core): validates registrations, assigns ids, keeps the
+// name->id map, and validates recipes. Creating the actual game objects is
+// the backend's job (FLCE_Backend.h).
+//
+// Id persistence: where the platform has a mods folder, forgedlce_ids.txt in
+// it keeps each name on the same id across runs. Without one (consoles
+// running a source build), built-in mods register in a fixed order, so ids
+// stay the same as long as the mod list and each mod's registrations don't
+// change. (A per-world id map in the save is planned.)
 #include "stdafx.h"
-#include "net.minecraft.world.level.h"
-#include "net.minecraft.world.level.tile.h"
-#include "net.minecraft.world.level.material.h"
-#include "net.minecraft.world.item.h"
-#include "net.minecraft.world.item.crafting.h"
-#include "net.minecraft.world.entity.player.h"
-#include "Recipes.h"
-#include "ShapedRecipy.h"
-#include "ShapelessRecipy.h"
-#include "FurnaceRecipes.h"
-
 #include "FLCE_Internal.h"
 
-#include <stdio.h>
-
-// Id persistence:
-//  - Windows64: mods\forgedlce_ids.txt keeps each name on the same id.
-//  - Consoles: no file. Built-in mods register in a fixed order, so ids stay
-//    the same as long as the mod list and each mod's registrations don't
-//    change. (A per-world id map in the save is planned.)
+#include <stdlib.h>
 
 namespace ForgedLCE {
-
-// ---------------------------------------------------------------------
-// Game classes driven by mod descriptors
-// ---------------------------------------------------------------------
-
-// Most Tile setters (setDestroyTime, setExplodeable, setSoundType,
-// setLightEmission, init) are protected in LCE, so the subclass applies them.
-class FLCE_ModTile : public Tile
-{
-public:
-    FLCE_ModTile(int id, Material *material, bool solidRender, const Tile::SoundType *sound,
-                 const FLCE_BlockDesc &desc, const wstring &texture, unsigned int nameId)
-        : Tile(id, material, solidRender),
-          m_dropId(desc.dropId),
-          m_dropCount(desc.dropCount > 0 ? desc.dropCount : 1),
-          m_onActivated(desc.onActivated),
-          m_userData(desc.userData)
-    {
-        setDestroyTime(desc.hardness);
-        setExplodeable(desc.resistance);
-        setSoundType(sound);
-        setLightEmission(desc.lightEmission);
-        setTextureName(texture);
-        setDescriptionId(nameId);
-    }
-
-    // Tile::init is protected; Tile::staticCtor calls it after creating
-    // each block's TileItem, and so does RegisterBlock.
-    void flceInit() { init(); }
-
-    // Tile has two TestUse overloads and vanilla tiles override either one
-    // (WorkbenchTile overrides the no-argument form), so override both.
-    virtual bool TestUse()
-    {
-        return m_onActivated != NULL;
-    }
-
-    virtual int getResource(int data, Random *random, int playerBonusLevel)
-    {
-        return m_dropId > 0 ? m_dropId : id;
-    }
-
-    virtual int getResourceCount(Random *random)
-    {
-        return m_dropCount;
-    }
-
-    // Lets the console UI show a "Use" prompt.
-    virtual bool TestUse(Level *level, int x, int y, int z, shared_ptr<Player> player)
-    {
-        return m_onActivated != NULL;
-    }
-
-    virtual bool use(Level *level, int x, int y, int z, shared_ptr<Player> player, int clickedFace,
-                     float clickX, float clickY, float clickZ, bool soundOnly = false)
-    {
-        if (m_onActivated == NULL || soundOnly) return false;
-        return m_onActivated(reinterpret_cast<FLCE_Level *>(level), x, y, z,
-                             reinterpret_cast<FLCE_Entity *>(static_cast<Entity *>(player.get())),
-                             clickedFace, m_userData) != 0;
-    }
-
-private:
-    int                   m_dropId;
-    int                   m_dropCount;
-    FLCE_BlockActivatedFn m_onActivated;
-    void                 *m_userData;
-};
-
-class FLCE_ModItem : public Item
-{
-public:
-    // `id` is the final numeric id; Item's constructor adds 256 itself.
-    FLCE_ModItem(int id, const FLCE_ItemDesc &desc)
-        : Item(id - 256), m_onUse(desc.onUse), m_userData(desc.userData)
-    {
-        if (desc.maxDamage > 0) setMaxDamage(desc.maxDamage); // protected in Item
-    }
-
-    virtual bool TestUse(Level *level, shared_ptr<Player> player)
-    {
-        return m_onUse != NULL;
-    }
-
-    virtual shared_ptr<ItemInstance> use(shared_ptr<ItemInstance> itemInstance, Level *level, shared_ptr<Player> player)
-    {
-        if (m_onUse != NULL) {
-            m_onUse(reinterpret_cast<FLCE_Level *>(level),
-                    reinterpret_cast<FLCE_Entity *>(static_cast<Entity *>(player.get())),
-                    m_userData);
-        }
-        return itemInstance;
-    }
-
-private:
-    FLCE_ItemUseFn m_onUse;
-    void          *m_userData;
-};
-
 namespace Registry {
 
 namespace {
@@ -130,24 +22,22 @@ std::map<std::wstring, int> g_assignedIds; // registered this run
 
 std::wstring IdMapPath()
 {
-    std::wstring dir = ModsDir();
+    std::wstring dir = Platform::ModsDir();
     return dir.empty() ? std::wstring() : dir + L"forgedlce_ids.txt";
 }
 
+// "modid:name" in printable ASCII: exactly one colon, not at either end,
+// no '=' (the id file's separator) and no spaces.
 bool IsValidRegistryName(const wchar_t *name)
 {
     if (name == NULL || name[0] == 0) return false;
-    const wchar_t *colon = wcschr(name, L':');
-    // "modid:name": exactly one colon, not at either end, no '=' (file format).
-    return colon != NULL && colon != name && colon[1] != 0 &&
-           wcschr(colon + 1, L':') == NULL && wcschr(name, L'=') == NULL;
-}
-
-bool IdIsUsed(int id)
-{
-    if (id < 0 || id >= Item::ITEM_NUM_COUNT) return true;
-    if (id < Tile::TILE_NUM_COUNT && Tile::tiles[id] != NULL) return true;
-    return Item::items[id] != NULL;
+    int colons = 0;
+    size_t len = 0, colonAt = 0;
+    for (const wchar_t *p = name; *p; ++p, ++len) {
+        if (*p < 0x21 || *p > 0x7E || *p == L'=') return false;
+        if (*p == L':') { ++colons; colonAt = len; }
+    }
+    return colons == 1 && colonAt != 0 && colonAt != len - 1;
 }
 
 // Prefer the id saved for this name; otherwise the lowest free id in range.
@@ -156,12 +46,12 @@ int AllocateId(const std::wstring &name, int lo, int hi)
     std::map<std::wstring, int>::const_iterator saved = g_savedIds.find(name);
     if (saved != g_savedIds.end()) {
         int id = saved->second;
-        if (id >= lo && id <= hi && !IdIsUsed(id)) return id;
+        if (id >= lo && id <= hi && !Backend::IdInUse(id)) return id;
         Log(FLCE_LOG_WARN, L"ForgedLCE",
             L"Saved id for " + name + L" is unavailable; worlds that used it may show the wrong block or item");
     }
     for (int id = lo; id <= hi; ++id) {
-        if (IdIsUsed(id)) continue;
+        if (Backend::IdInUse(id)) continue;
         // Don't steal an id another (possibly absent) mod saved.
         bool reserved = false;
         for (std::map<std::wstring, int>::const_iterator it = g_savedIds.begin(); it != g_savedIds.end(); ++it) {
@@ -187,49 +77,21 @@ bool CheckPhaseAtLeast(LoadPhase minimum, const wchar_t *what)
     return false;
 }
 
-Material *MapMaterial(int m)
+// Registry names are ASCII (checked above), so the id file is plain ASCII.
+std::string Narrow(const std::wstring &s)
 {
-    switch (m) {
-    case FLCE_MATERIAL_WOOD:   return Material::wood;
-    case FLCE_MATERIAL_DIRT:   return Material::dirt;
-    case FLCE_MATERIAL_GRASS:  return Material::grass;
-    case FLCE_MATERIAL_SAND:   return Material::sand;
-    case FLCE_MATERIAL_METAL:  return Material::metal;
-    case FLCE_MATERIAL_GLASS:  return Material::glass;
-    case FLCE_MATERIAL_CLOTH:  return Material::cloth;
-    case FLCE_MATERIAL_PLANT:  return Material::plant;
-    case FLCE_MATERIAL_LEAVES: return Material::leaves;
-    case FLCE_MATERIAL_ICE:    return Material::ice;
-    case FLCE_MATERIAL_CLAY:   return Material::clay;
-    default:                   return Material::stone;
-    }
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) out += (char)(s[i] & 0x7F);
+    return out;
 }
 
-const Tile::SoundType *MapSound(int s)
+std::wstring Widen(const std::string &s)
 {
-    switch (s) {
-    case FLCE_SOUND_WOOD:   return Tile::SOUND_WOOD;
-    case FLCE_SOUND_GRAVEL: return Tile::SOUND_GRAVEL;
-    case FLCE_SOUND_GRASS:  return Tile::SOUND_GRASS;
-    case FLCE_SOUND_METAL:  return Tile::SOUND_METAL;
-    case FLCE_SOUND_GLASS:  return Tile::SOUND_GLASS;
-    case FLCE_SOUND_CLOTH:  return Tile::SOUND_CLOTH;
-    case FLCE_SOUND_SAND:   return Tile::SOUND_SAND;
-    case FLCE_SOUND_SNOW:   return Tile::SOUND_SNOW;
-    default:                return Tile::SOUND_STONE;
-    }
-}
-
-bool IdExists(int id)
-{
-    if (id <= 0 || id >= Item::ITEM_NUM_COUNT) return false;
-    if (id < 256) return Tile::tiles[id] != NULL;
-    return Item::items[id] != NULL;
-}
-
-ItemInstance *MakeInstance(int id, int count, int data)
-{
-    return new ItemInstance(id, count, data);
+    std::wstring out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) out += (wchar_t)(unsigned char)s[i];
+    return out;
 }
 
 } // namespace
@@ -240,47 +102,45 @@ void LoadIdMap()
 {
     g_savedIds.clear();
     std::wstring path = IdMapPath();
-    if (path.empty()) return;
-#ifdef _WINDOWS64
-    FILE *f = _wfopen(path.c_str(), L"rt, ccs=UTF-8");
-    if (f == NULL) return; // first run
-    wchar_t line[512];
-    while (fgetws(line, 512, f) != NULL) {
-        std::wstring s(line);
-        while (!s.empty() && (s[s.size() - 1] == L'\n' || s[s.size() - 1] == L'\r')) s.erase(s.size() - 1);
-        if (s.empty() || s[0] == L'#') continue;
-        size_t eq = s.find(L'=');
-        if (eq == std::wstring::npos) continue;
-        int id = _wtoi(s.c_str() + eq + 1);
-        if (id > 0) g_savedIds[s.substr(0, eq)] = id;
+    std::string text;
+    if (path.empty() || !Platform::ReadFile(path, text)) return; // none yet
+
+    // Skip a UTF-8 byte order mark (older versions wrote one).
+    size_t pos = text.size() >= 3 && (unsigned char)text[0] == 0xEF ? 3 : 0;
+    while (pos < text.size()) {
+        size_t end = text.find('\n', pos);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(pos, end - pos);
+        pos = end + 1;
+        while (!line.empty() && (line[line.size() - 1] == '\r' || line[line.size() - 1] == ' ')) line.erase(line.size() - 1);
+        if (line.empty() || line[0] == '#') continue;
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        int id = atoi(line.c_str() + eq + 1);
+        if (id > 0) g_savedIds[Widen(line.substr(0, eq))] = id;
     }
-    fclose(f);
-#endif
 }
 
 void SaveIdMap()
 {
     std::wstring path = IdMapPath();
     if (path.empty()) return;
-#ifdef _WINDOWS64
+
     // Keep saved entries for mods that are not installed right now, so
     // re-adding a mod gets its old ids back.
     std::map<std::wstring, int> all = g_savedIds;
     for (std::map<std::wstring, int>::const_iterator it = g_assignedIds.begin(); it != g_assignedIds.end(); ++it) {
         all[it->first] = it->second;
     }
-    FILE *f = _wfopen(path.c_str(), L"wt, ccs=UTF-8");
-    if (f == NULL) {
-        Log(FLCE_LOG_ERROR, L"ForgedLCE", L"Could not write " + path);
-        return;
-    }
-    fputws(L"# ForgedLCE id map. Keeps mod blocks/items on the same ids across runs.\n", f);
-    fputws(L"# Do not edit while worlds that use these mods exist.\n", f);
+    std::string text =
+        "# ForgedLCE id map. Keeps mod blocks/items on the same ids across runs.\n"
+        "# Do not edit while worlds that use these mods exist.\n";
     for (std::map<std::wstring, int>::const_iterator it = all.begin(); it != all.end(); ++it) {
-        fwprintf(f, L"%ls=%d\n", it->first.c_str(), it->second);
+        text += Narrow(it->first) + "=" + Narrow(IntToString(it->second)) + "\n";
     }
-    fclose(f);
-#endif
+    if (!Platform::WriteFile(path, text)) {
+        Log(FLCE_LOG_ERROR, L"ForgedLCE", L"Could not write " + path);
+    }
 }
 
 // ---- blocks and items -----------------------------------------------
@@ -308,22 +168,12 @@ int RegisterBlock(const FLCE_BlockDesc *desc)
         return -1;
     }
 
-    bool solidRender = desc->material != FLCE_MATERIAL_GLASS &&
-                       desc->material != FLCE_MATERIAL_LEAVES &&
-                       desc->material != FLCE_MATERIAL_PLANT;
-
     std::wstring display = desc->displayName ? desc->displayName : name;
     std::wstring texture = desc->textureName ? desc->textureName : L"stone";
-
-    // The Tile constructor stores the block in Tile::tiles[id].
-    FLCE_ModTile *tile = new FLCE_ModTile(id, MapMaterial(desc->material), solidRender,
-                                          MapSound(desc->sound), *desc, texture,
-                                          AddModString(display));
-
-    // Tile::staticCtor's TileItem loop has already run, so do its job here.
-    if (Item::items[id] == NULL) {
-        new TileItem(id - 256); // the Item constructor stores it in Item::items[id]
-        tile->flceInit();
+    std::wstring error;
+    if (!Backend::CreateBlock(id, *desc, texture, AddModString(display), error)) {
+        Log(FLCE_LOG_ERROR, L"ForgedLCE", L"registerBlock: " + name + L": " + error);
+        return -1;
     }
 
     g_assignedIds[name] = id;
@@ -356,12 +206,11 @@ int RegisterItem(const FLCE_ItemDesc *desc)
 
     std::wstring display = desc->displayName ? desc->displayName : name;
     std::wstring texture = desc->textureName ? desc->textureName : L"stick";
-
-    Item *item = new FLCE_ModItem(id, *desc);
-    item->setTextureName(texture);
-    item->setDescriptionId(AddModString(display));
-    if (desc->maxStackSize > 0) item->setMaxStackSize(desc->maxStackSize);
-    if (desc->handEquipped)     item->handEquipped();
+    std::wstring error;
+    if (!Backend::CreateItem(id, *desc, texture, AddModString(display), error)) {
+        Log(FLCE_LOG_ERROR, L"ForgedLCE", L"registerItem: " + name + L": " + error);
+        return -1;
+    }
 
     g_assignedIds[name] = id;
     Log(FLCE_LOG_INFO, L"ForgedLCE", L"Registered item " + name + L" as id " + IntToString(id));
@@ -382,7 +231,7 @@ int AddShapedRecipe(int resultId, int resultCount, int resultData,
                     const FLCE_RecipeKey *keys, int keyCount)
 {
     if (!CheckPhaseAtLeast(PHASE_INIT, L"addShapedRecipe")) return 0;
-    if (!IdExists(resultId) || rows == NULL || rowCount < 1 || rowCount > 3 || (keyCount > 0 && keys == NULL)) {
+    if (!Backend::IdExists(resultId) || rows == NULL || rowCount < 1 || rowCount > 3 || (keyCount > 0 && keys == NULL)) {
         Log(FLCE_LOG_ERROR, L"ForgedLCE", L"addShapedRecipe: bad arguments");
         return 0;
     }
@@ -398,83 +247,76 @@ int AddShapedRecipe(int resultId, int resultCount, int resultData,
         }
     }
     for (int k = 0; k < keyCount; ++k) {
-        if (!IdExists(keys[k].id)) {
+        if (!Backend::IdExists(keys[k].id)) {
             Log(FLCE_LOG_ERROR, L"ForgedLCE", L"addShapedRecipe: key refers to an unknown id");
             return 0;
         }
     }
 
-    ItemInstance **slots = new ItemInstance *[width * rowCount];
+    int slotIds[9], slotData[9];
     for (int r = 0; r < rowCount; ++r) {
         for (int c = 0; c < width; ++c) {
             wchar_t ch = rows[r][c];
-            ItemInstance *slot = NULL;
-            if (ch != L' ') {
-                for (int k = 0; k < keyCount; ++k) {
-                    if (keys[k].symbol == ch) {
-                        // Not `cond ? Recipes::ANY_AUX_VALUE : ...`: that binds a
-                        // reference to the static const, which needs an
-                        // out-of-class definition on stricter compilers.
-                        int data = keys[k].data;
-                        if (data < 0) data = Recipes::ANY_AUX_VALUE;
-                        slot = MakeInstance(keys[k].id, 1, data);
-                        break;
-                    }
-                }
-                if (slot == NULL) {
-                    Log(FLCE_LOG_ERROR, L"ForgedLCE", std::wstring(L"addShapedRecipe: no key for symbol '") + ch + L"'");
-                    for (int i = 0; i < r * width + c; ++i) delete slots[i];
-                    delete[] slots;
-                    return 0;
-                }
+            int slot = r * width + c;
+            slotIds[slot] = 0;
+            slotData[slot] = -1;
+            if (ch == L' ') continue;
+            int k = 0;
+            while (k < keyCount && keys[k].symbol != ch) ++k;
+            if (k == keyCount) {
+                Log(FLCE_LOG_ERROR, L"ForgedLCE", std::wstring(L"addShapedRecipe: no key for symbol '") + ch + L"'");
+                return 0;
             }
-            slots[r * width + c] = slot;
+            slotIds[slot] = keys[k].id;
+            slotData[slot] = keys[k].data < 0 ? -1 : keys[k].data;
         }
     }
 
-    ItemInstance *result = MakeInstance(resultId, resultCount > 0 ? resultCount : 1, resultData);
-    Recipes::getInstance()->getRecipies()->push_back(new ShapedRecipy(width, rowCount, slots, result));
+    if (!Backend::AddShaped(width, rowCount, slotIds, slotData,
+                            resultId, resultCount > 0 ? resultCount : 1, resultData)) {
+        Log(FLCE_LOG_ERROR, L"ForgedLCE", L"addShapedRecipe: the game rejected the recipe");
+        return 0;
+    }
     return 1;
 }
 
 int AddShapelessRecipe(int resultId, int resultCount, int resultData, const int *ids, int count)
 {
     if (!CheckPhaseAtLeast(PHASE_INIT, L"addShapelessRecipe")) return 0;
-    if (!IdExists(resultId) || ids == NULL || count < 1 || count > 9) {
+    if (!Backend::IdExists(resultId) || ids == NULL || count < 1 || count > 9) {
         Log(FLCE_LOG_ERROR, L"ForgedLCE", L"addShapelessRecipe: bad arguments");
         return 0;
     }
     for (int i = 0; i < count; ++i) {
-        if (!IdExists(ids[i])) {
+        if (!Backend::IdExists(ids[i])) {
             Log(FLCE_LOG_ERROR, L"ForgedLCE", L"addShapelessRecipe: ingredient refers to an unknown id");
             return 0;
         }
     }
-    vector<ItemInstance *> *ingredients = new vector<ItemInstance *>();
-    for (int i = 0; i < count; ++i) {
-        ingredients->push_back(MakeInstance(ids[i], 1, Recipes::ANY_AUX_VALUE));
+    if (!Backend::AddShapeless(ids, count, resultId, resultCount > 0 ? resultCount : 1, resultData)) {
+        Log(FLCE_LOG_ERROR, L"ForgedLCE", L"addShapelessRecipe: the game rejected the recipe");
+        return 0;
     }
-    ItemInstance *result = MakeInstance(resultId, resultCount > 0 ? resultCount : 1, resultData);
-    Recipes::getInstance()->getRecipies()->push_back(new ShapelessRecipy(result, ingredients));
     return 1;
 }
 
 int AddSmelting(int inputId, int resultId, int resultCount, int resultData, float xp)
 {
     if (!CheckPhaseAtLeast(PHASE_INIT, L"addSmelting")) return 0;
-    if (!IdExists(inputId) || !IdExists(resultId)) {
+    if (!Backend::IdExists(inputId) || !Backend::IdExists(resultId)) {
         Log(FLCE_LOG_ERROR, L"ForgedLCE", L"addSmelting: unknown id");
         return 0;
     }
-    FurnaceRecipes::getInstance()->addFurnaceRecipy(
-        inputId, MakeInstance(resultId, resultCount > 0 ? resultCount : 1, resultData), xp);
+    if (!Backend::AddSmelting(inputId, resultId, resultCount > 0 ? resultCount : 1, resultData, xp)) {
+        Log(FLCE_LOG_ERROR, L"ForgedLCE", L"addSmelting: the game rejected the recipe");
+        return 0;
+    }
     return 1;
 }
 
 void FinishRecipes()
 {
-    // Added by patches/0003: rebuilds the console crafting menu's cache.
-    Recipes::getInstance()->flceRebuildIngredientsArray();
+    Backend::FinishRecipes();
 }
 
 } // namespace Registry

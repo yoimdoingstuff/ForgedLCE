@@ -262,6 +262,16 @@ typedef struct FLCE_ModInfo {
  */
 typedef int (FLCE_CALL *FLCE_ModEntryFn)(unsigned int apiVersion, FLCE_ModInfo *info);
 
+/*
+ * Code mods as files, loaded by the injected plugins:
+ *  - Xbox 360: a DLL-type XEX exporting flce_mod_entry as ordinal 1
+ *    (see examples/ExampleMod/ExampleMod360.def)
+ *  - PS Vita: a .suprx; ForgedLCE passes a pointer to an FLCE_VitaRegisterFn
+ *    as module_start's argp, and the mod calls it with its entry point.
+ *    Include forgedlce/ForgedLCE_VitaModule.h in one file of the mod.
+ */
+typedef void (FLCE_CALL *FLCE_VitaRegisterFn)(FLCE_ModEntryFn entry);
+
 #ifdef __cplusplus
 #  define FLCE_EXTERN_C extern "C"
 #else

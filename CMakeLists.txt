@@ -39,10 +39,20 @@ endif()
 # ---------------------------------------------------------------------------
 # Loader + fake game
 # ---------------------------------------------------------------------------
-add_library(flce_game STATIC
+# The loader core: shared by source builds and the injected plugins.
+set(FLCE_CORE_SOURCES
   loader/FLCE_Events.cpp
   loader/FLCE_Loader.cpp
   loader/FLCE_Registry.cpp
+  loader/FLCE_Json.cpp
+  loader/FLCE_DataMods.cpp)
+
+# Source mode: the core + the source-build backend and platform layer,
+# against the fake game (with the patches' code in it).
+add_library(flce_game STATIC
+  ${FLCE_CORE_SOURCES}
+  loader/FLCE_GameSource.cpp
+  loader/FLCE_PlatformGame.cpp
   standalone/fakegame/FakeGame.cpp)
 target_include_directories(flce_game PUBLIC
   standalone/fakegame   # stdafx.h and the game header names
@@ -92,22 +102,52 @@ target_link_libraries(flce_tests PRIVATE flce_game)
 set_target_properties(flce_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${FLCE_OUT})
 
 # ---------------------------------------------------------------------------
-# DLL mods. ExampleMod.dll is also the file you would ship as a Windows64 mod.
+# Code mods as modules (.dll / .so). ExampleMod.dll is also the file you would
+# ship as a Windows64 mod.
 # ---------------------------------------------------------------------------
 add_library(examplemod_dll SHARED examples/ExampleMod/ExampleMod.cpp)
 target_include_directories(examplemod_dll PRIVATE include)
 set_target_properties(examplemod_dll PROPERTIES OUTPUT_NAME ExampleMod PREFIX "")
 
-if(WIN32 AND NOT FLCE_EMULATE_CONSOLE)
-  add_library(dllmod SHARED standalone/tests/DllMod.cpp)
-  target_include_directories(dllmod PRIVATE include)
-  set_target_properties(dllmod PROPERTIES OUTPUT_NAME DllMod)
+add_library(dllmod SHARED standalone/tests/DllMod.cpp)
+target_include_directories(dllmod PRIVATE include)
+set_target_properties(dllmod PROPERTIES OUTPUT_NAME DllMod PREFIX "")
 
-  # The tests load both from <test exe dir>\mods\. ExampleMod.dll must be
-  # rejected there as a duplicate of the built-in examplemod.
+if(WIN32 AND NOT FLCE_EMULATE_CONSOLE)
+  # The source-mode tests load both from <test exe dir>\mods\. ExampleMod.dll
+  # must be rejected there as a duplicate of the built-in examplemod.
   set_target_properties(examplemod_dll dllmod PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${FLCE_OUT}/mods)
   add_dependencies(flce_tests examplemod_dll dllmod)
 endif()
 
+# ---------------------------------------------------------------------------
+# Injected mode: the code of the Xbox 360 / PS Vita plugins, tested against
+# the fake game in RETAIL mode (no patches), with a simulated hook engine.
+# ---------------------------------------------------------------------------
+add_library(flce_fakegame_retail STATIC standalone/fakegame/FakeGame.cpp)
+target_compile_definitions(flce_fakegame_retail PUBLIC FLCE_FAKE_RETAIL)
+target_include_directories(flce_fakegame_retail PUBLIC standalone/fakegame loader include/forgedlce include)
+if(NOT WIN32)
+  target_link_libraries(flce_fakegame_retail PUBLIC Threads::Threads)
+endif()
+
+add_executable(flce_inject_tests
+  ${FLCE_CORE_SOURCES}
+  inject/FLCE_Addresses.cpp
+  inject/FLCE_GameInjected.cpp
+  inject/FLCE_InjectHooks.cpp
+  inject/FLCE_HookPPC.cpp
+  standalone/tests/FLCE_PlatformHost.cpp
+  standalone/tests/InjectStaticMods.cpp
+  standalone/tests/run_inject_tests.cpp
+  ${CMAKE_BINARY_DIR}/slots/slot_testmod.cpp)
+target_include_directories(flce_inject_tests PRIVATE inject standalone/tests)
+target_link_libraries(flce_inject_tests PRIVATE flce_fakegame_retail ${CMAKE_DL_LIBS})
+set_target_properties(flce_inject_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${FLCE_OUT})
+add_dependencies(flce_inject_tests examplemod_dll dllmod)
+
 enable_testing()
 add_test(NAME flce_tests COMMAND flce_tests)
+add_test(NAME flce_inject_tests
+         COMMAND flce_inject_tests $<TARGET_FILE:dllmod> $<TARGET_FILE:examplemod_dll>
+                 ${CMAKE_BINARY_DIR}/inject_work ${CMAKE_CURRENT_SOURCE_DIR}/inject/addresses/TEMPLATE.txt)

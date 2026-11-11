@@ -1,0 +1,5 @@
+; Exports for building ExampleMod as an Xbox 360 code mod (DLL-type XEX).
+; The ForgedLCE Xbox 360 plugin looks up flce_mod_entry by ordinal 1.
+LIBRARY ExampleMod
+EXPORTS
+    flce_mod_entry @1
